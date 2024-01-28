@@ -1,20 +1,22 @@
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::path::PathBuf;
+use std::rc::Rc;
 
-use crate::tokenizer::tokenize;
+use crate::tokenizer::Token;
 use crate::errors::ParseError;
 
 
 // tree stuff
+#[derive(Debug, Clone)]
 pub struct Tree();
 
 
 // entry point
-pub fn parse(path: &Path, input: &str) -> Result<Tree, ParseError> {
-    // first tokenize
-    let tokens = tokenize(path, input)?;
-
+pub fn parse(
+    path: &Rc<PathBuf>,
+    tokens: &[Token<'_>]
+) -> Result<Tree, ParseError> {
     // debugging...
     println!("{:#?}", tokens);
 

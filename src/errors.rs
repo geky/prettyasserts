@@ -1,15 +1,15 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::path::Path;
 use std::fs::File;
 use std::io::BufReader;
 use std::io::BufRead;
+use std::rc::Rc;
 
 // error stuff
 #[derive(Debug)]
 pub struct ParseError {
-    file: PathBuf,
+    file: Rc<PathBuf>,
     line: usize,
     col: usize,
     message: String,
@@ -30,19 +30,19 @@ impl std::error::Error for ParseError {}
 
 impl ParseError {
     pub fn new(
-        file: &Path,
+        file: &Rc<PathBuf>,
         line: usize,
         col: usize,
-        message: &str,
+        message: String,
     ) -> Self {
-        Self{file: file.to_path_buf(), line, col, message: message.to_string()}
+        Self{file: file.clone(), line, col, message}
     }
 
     pub fn print_context(&self) {
         print!("{}", self);
 
         // try to also print context, but ignore errors
-        if let Ok(f) = File::open(&self.file) {
+        if let Ok(f) = File::open(self.file.as_ref()) {
             let f = BufReader::new(f);
             if let Some(Ok(line)) = f.lines().nth(self.line-1) {
                 println!(":\n{}", line);
