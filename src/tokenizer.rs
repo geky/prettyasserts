@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::cmp::min;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::borrow::Cow;
 
 use crate::errors::ParseError;
 
@@ -41,31 +42,31 @@ pub struct Token<'a> {
     pub line: usize,
     pub col: usize,
     pub tt: Tt,
-    pub ws: &'a str,
-    pub tok: &'a str,
+    pub ws: Cow<'a, str>,
+    pub tok: Cow<'a, str>,
 }
 
 impl<'a> Token<'a> {
-    pub fn new(tt: Tt, tok: &'a str) -> Token<'a> {
+    pub fn new<S: Into<Cow<'a, str>>>(tt: Tt, tok: S) -> Self {
         Self{
             file: Rc::new(PathBuf::new()),
             line: 1,
             col: 1,
             tt: tt,
-            ws: "",
-            tok: tok,
+            ws: Cow::from(""),
+            tok: tok.into(),
         }
     }
 
-    pub fn new_ws(tt: Tt, ws: &'a str, tok: &'a str) -> Token<'a> {
+    pub fn ws<S: Into<Cow<'a, str>>>(self, ws: S) -> Self {
         Self{
-            file: Rc::new(PathBuf::new()),
-            line: 1,
-            col: 1,
-            tt: tt,
-            ws: ws,
-            tok: tok,
+            ws: ws.into(),
+            ..self
         }
+    }
+
+    pub fn indent(self, n: usize) -> Self {
+        self.ws(format!("\n{:n$}", "", n=n))
     }
 }
 
@@ -167,8 +168,8 @@ impl<'a> Tokenizer<'a> {
             line: self.line,
             col: self.col,
             tt: tt,
-            ws: &self.input[self.ws_i..self.i],
-            tok: self.found,
+            ws: Cow::from(&self.input[self.ws_i..self.i]),
+            tok: Cow::from(self.found),
         };
         self._next(tok.tok.len());
         self.ws_i = self.i;

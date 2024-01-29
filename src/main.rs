@@ -2,7 +2,7 @@
 
 use structopt::StructOpt;
 use anyhow;
-use either::{Either, Left, Right};
+use either::{Left, Right};
 
 use std::path::PathBuf;
 use std::fs;
@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::Write;
 use std::rc::Rc;
 use std::ops::Deref;
+use std::borrow::Cow;
 
 // The actual parser is over here
 mod errors;
@@ -22,9 +23,12 @@ use parser::parse;
 use parser::Expr;
 
 
-// hack
-fn indent(n: usize) -> &'static str {
-    Box::leak(format!("\n{:w$}", "", w=n).into_boxed_str())
+fn tok<'a>(s: &'a str) -> Token<'a> {
+    Token::new(Tt::Sym, s)
+}
+
+fn sym<'a>(s: &'a str) -> Expr<'a> {
+    Expr::Sym(tok(s))
 }
 
 fn squiggle<'a>(exprs: &[Expr<'a>]) -> Expr<'a> {
@@ -33,7 +37,7 @@ fn squiggle<'a>(exprs: &[Expr<'a>]) -> Expr<'a> {
         list.push((
             Some(expr.clone()),
             if i < exprs.len()-1 {
-                Some(Token::new(Tt::Semi, ";"))
+                Some(tok(";"))
             } else {
                 None
             }
@@ -41,33 +45,18 @@ fn squiggle<'a>(exprs: &[Expr<'a>]) -> Expr<'a> {
     }
 
     Expr::Squiggle(
-        Token::new(Tt::LSquiggle, ""),
+        tok(""),
         list,
-        Token::new(Tt::RSquiggle, ""),
+        tok(""),
     )
 }
 
-fn tok<'a>(s: &'a str) -> Token<'a> {
-    Token::new(Tt::Sym, s)
-}
-
-fn tok_ws<'a>(ws: &'a str, s: &'a str) -> Token<'a> {
-    Token::new_ws(Tt::Sym, ws, s)
-}
-
-fn sym<'a>(s: &'a str) -> Expr<'a> {
-    Expr::Sym(tok(s))
-}
-
-fn sym_ws<'a>(ws: &'a str, s: &'a str) -> Expr<'a> {
-    Expr::Sym(tok_ws(ws, s))
-}
 
 // modify the tree
 fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
     if let Expr::Binary(lh, Token{tt: Tt::BigArrow,..}, rh) = &expr {
         if let Expr::Call(sym_, l, list, r) = lh.deref() {
-            if let Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}) = sym_.deref() {
+            if let Expr::Sym(sym_@Token{tok: Cow::Borrowed("lfsr_rbyd_get"), ..}) = sym_.deref() {
                 let rh = match rh.deref() {
                     rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR") => Right(rh),
                     rh => Left(rh),
@@ -76,20 +65,20 @@ fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
                 let mut list_ = vec![];
                 list_.push(Expr::Binary(
                     Box::new(Expr::Call(
-                        Box::new(sym_ws(sym_.ws, "lfsr_rbyd_lookup")),
+                        Box::new(sym("lfsr_rbyd_lookup").ws(sym_.ws.clone())),
                         l.clone(),
                         vec![
                             list[0].clone(),
                             list[1].clone(),
                             list[2].clone(),
                             list[3].clone(),
-                            (Some(sym_ws(indent(sym_.col-1 + 8), "&data")), None)
+                            (Some(sym("&data").indent(sym_.col-1 + 8)), None)
                         ],
                         r.clone(),
                     )),
-                    tok_ws(" ", "=>"),
+                    tok("=>").ws(" "),
                     Box::new(match rh {
-                        Left(_) => sym_ws(" ", "0"),
+                        Left(_) => sym("0").ws(" "),
                         Right(rh) => rh.clone(),
                     }),
                 ));
@@ -97,17 +86,17 @@ fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
                 if let Left(rh) = rh {
                     list_.push(Expr::Binary(
                         Box::new(Expr::Call(
-                            Box::new(sym_ws(indent(sym_.col-1), "lfsr_data_read")),
+                            Box::new(sym("lfsr_data_read").indent(sym_.col-1)),
                             l.clone(),
                             vec![
                                 (Some(sym("&lfs")), Some(tok(","))),
-                                (Some(sym_ws(" ", "&data")), Some(tok(","))),
+                                (Some(sym("&data").ws(" ")), Some(tok(","))),
                                 list[4].clone(),
                                 list[5].clone(),
                             ],
                             r.clone()
                         )),
-                        tok_ws(" ", "=>"),
+                        tok("=>").ws(" "),
                         Box::new(rh.clone()),
                     ));
                 }

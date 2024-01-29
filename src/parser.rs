@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use std::borrow::Cow;
+
 use crate::tokenizer::Token;
 use crate::tokenizer::Tt;
 use crate::errors::ParseError;
@@ -209,6 +211,48 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
 
 
 //// utils ///
+
+// whitespace stuff
+impl<'a> Tree<'a> {
+    pub fn ws<S: Into<Cow<'a, str>>>(self, ws: S) -> Self {
+        let mut first = true;
+        let ws = ws.into();
+        self.map_tokens(|tok| {
+            if first {
+                let tok = tok.ws(ws.clone());
+                first = false;
+                tok
+            } else {
+                tok
+            }
+        })
+    }
+
+    pub fn indent(self, n: usize) -> Self {
+        self.ws(format!("\n{:n$}", "", n=n))
+    }
+}
+
+impl<'a> Expr<'a> {
+    pub fn ws<S: Into<Cow<'a, str>>>(self, ws: S) -> Self {
+        let mut first = true;
+        let ws = ws.into();
+        self.map_tokens(|tok| {
+            if first {
+                let tok = tok.ws(ws.clone());
+                first = false;
+                tok
+            } else {
+                tok
+            }
+        })
+    }
+
+    pub fn indent(self, n: usize) -> Self {
+        self.ws(format!("\n{:n$}", "", n=n))
+    }
+}
+
 
 // token traversal
 impl<'a> Tree<'a> {
