@@ -15,6 +15,15 @@ mod tokenizer;
 use tokenizer::tokenize;
 mod parser;
 use parser::parse;
+use parser::Expr;
+
+
+// modify the tree
+fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
+    Ok(expr)
+}
+
+
 
 
 // CLI arguments
@@ -36,6 +45,9 @@ struct Opt {
 
     #[structopt(long)]
     dump_tree: bool,
+
+    #[structopt(long)]
+    dump_modified: bool,
 }
 
 // entry point
@@ -67,6 +79,14 @@ fn main() -> Result<(), anyhow::Error> {
     };
 
     if opt.dump_tree {
+        println!("{:#?}", tree);
+        std::process::exit(0);
+    }
+
+    // modify!
+    let tree = tree.try_map_exprs(modify)?;
+
+    if opt.dump_modified {
         println!("{:#?}", tree);
         std::process::exit(0);
     }
