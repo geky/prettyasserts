@@ -14,16 +14,22 @@ use crate::errors::ParseError;
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Tt {
     Symbol,     // blah1
+    Number,     // 0x1234
+    String,     // "asdfasdf"
     LParen,     // (
     RParen,     // )
     LSquiggle,  // {
     RSquiggle,  // }
     LSquare,    // [
     RSquare,    // ]
+    BigArrow,   // =>
     EqEq,       // ==
     Eq,         // =
+    Dot,        // .
     And,        // &
     Splat,      // *
+    Arrow,      // ->
+    Sub,        // -
     Comma,      // ,
     Semi,       // ;
     TrailingWs,
@@ -31,12 +37,12 @@ pub enum Tt {
 
 #[derive(Clone)]
 pub struct Token<'a> {
-    file: Rc<PathBuf>,
-    line: usize,
-    col: usize,
-    tt: Tt,
-    ws: &'a str,
-    tok: &'a str,
+    pub file: Rc<PathBuf>,
+    pub line: usize,
+    pub col: usize,
+    pub tt: Tt,
+    pub ws: &'a str,
+    pub tok: &'a str,
 }
 
 impl std::fmt::Debug for Token<'_> {
@@ -55,7 +61,7 @@ impl std::fmt::Debug for Token<'_> {
 }
 
 // helper for pattern matching
-struct Matcher<'a> {
+struct Tokenizer<'a> {
     file: Rc<PathBuf>,
     line: usize,
     col: usize,
@@ -71,7 +77,7 @@ struct Matcher<'a> {
     found: &'a str,
 }
 
-impl<'a> Matcher<'a> {
+impl<'a> Tokenizer<'a> {
     fn new(file: &Rc<PathBuf>, input: &'a str) -> Self {
         Self{
             file: file.clone(),
@@ -116,7 +122,9 @@ impl<'a> Matcher<'a> {
             });
         let found = r.find(&self.input[self.i..]).map(|m| m.as_str());
         // save the last match
-        self.found = found.unwrap_or("");
+        if let Some(found) = found {
+            self.found = found;
+        }
         found
     }
 
@@ -146,6 +154,14 @@ impl<'a> Matcher<'a> {
     fn error(&self, message: String) -> ParseError {
         ParseError::new(&self.file, self.line, self.col, message)
     }
+
+    fn unknown(&self) -> ParseError {
+        let tail = self.tail();
+        self.error(format!(
+            "Unknown token: \"{}...\"",
+            &tail[..min(tail.len(), 8)]
+        ))
+    }
 }
 
 // tokenizer
@@ -154,46 +170,56 @@ pub fn tokenize<'a>(
     input: &'a str
 ) -> Result<Vec<Token<'a>>, ParseError> {
     let mut tokens = vec![];
-    let mut m = Matcher::new(file, input);
+    let mut t = Tokenizer::new(file, input);
 
-    while !m.is_done() {
+    while !t.is_done() {
         // parse whitespace separately
-        while !m.is_done() {
-            match m.tail() {
-                _ if m.matches(r" ")  => m.skip_ws(1),
-                _ if m.matches(r"\n") => m.skip_ws(1),
+        while !t.is_done() {
+            match t.tail() {
+                _ if t.matches(r" ")  => t.skip_ws(1),
+                _ if t.matches(r"\n") => t.skip_ws(1),
+                _ if t.matches(r"//") => {
+                    while !t.is_done() && !t.matches(r"\n") {
+                        t.skip_ws(1);
+                    }
+                }
                 _ => break,
             }
         }
 
         // now parse the actual token
-        tokens.push(match m.tail() {
+        tokens.push(match t.tail() {
             // symbols
-            _ if m.matches(r"[a-zA-Z_][a-zA-Z_0-9]*") => {
-                m.munch(Tt::Symbol)
+            _ if t.matches(r"[a-zA-Z_][a-zA-Z_0-9]*") => {
+                t.munch(Tt::Symbol)
             },
-            // tokens
-            _ if m.matches(r"\(") => m.munch(Tt::LParen),
-            _ if m.matches(r"\)") => m.munch(Tt::RParen),
-            _ if m.matches(r"\{") => m.munch(Tt::LSquiggle),
-            _ if m.matches(r"\}") => m.munch(Tt::RSquiggle),
-            _ if m.matches(r"\[") => m.munch(Tt::LSquare),
-            _ if m.matches(r"\]") => m.munch(Tt::RSquare),
-            _ if m.matches(r"==") => m.munch(Tt::EqEq),
-            _ if m.matches(r"=")  => m.munch(Tt::Eq),
-            _ if m.matches(r"&")  => m.munch(Tt::And),
-            _ if m.matches(r"\*") => m.munch(Tt::Splat),
-            _ if m.matches(r",") => m.munch(Tt::Comma),
-            _ if m.matches(r";") => m.munch(Tt::Semi),
-            // wait, end of input?
-            "" => m.munch(Tt::TrailingWs),
-            // unknown token
-            tail => {
-                return Err(m.error(format!(
-                    "Unknown token: \"{}...\"",
-                    &tail[..min(tail.len(), 8)]
-                )));
+            _ if t.matches(r"[0-9][xX]?[0-9a-fA-F]*") => {
+                t.munch(Tt::Number)
+            },
+            _ if t.matches(r#"['"][^'"]*['"]"#) => {
+                t.munch(Tt::String)
             }
+            // tokens
+            _ if t.matches(r"\(") => t.munch(Tt::LParen),
+            _ if t.matches(r"\)") => t.munch(Tt::RParen),
+            _ if t.matches(r"\{") => t.munch(Tt::LSquiggle),
+            _ if t.matches(r"\}") => t.munch(Tt::RSquiggle),
+            _ if t.matches(r"\[") => t.munch(Tt::LSquare),
+            _ if t.matches(r"\]") => t.munch(Tt::RSquare),
+            _ if t.matches(r"=>") => t.munch(Tt::BigArrow),
+            _ if t.matches(r"==") => t.munch(Tt::EqEq),
+            _ if t.matches(r"=")  => t.munch(Tt::Eq),
+            _ if t.matches(r"\.") => t.munch(Tt::Dot),
+            _ if t.matches(r"&")  => t.munch(Tt::And),
+            _ if t.matches(r"\*") => t.munch(Tt::Splat),
+            _ if t.matches(r"->") => t.munch(Tt::Arrow),
+            _ if t.matches(r"-")  => t.munch(Tt::Sub),
+            _ if t.matches(r",")  => t.munch(Tt::Comma),
+            _ if t.matches(r";")  => t.munch(Tt::Semi),
+            // wait, end of input?
+            "" => t.munch(Tt::TrailingWs),
+            // unknown token
+            _ => return Err(t.unknown()),
         });
     }
 

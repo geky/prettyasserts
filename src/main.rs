@@ -56,7 +56,7 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     // parse
-    let tree = match parse(&opt.input, &tokens) {
+    let tree = match parse(&tokens) {
         Ok(tree) => tree,
         Err(err) => {
             err.print_context();
