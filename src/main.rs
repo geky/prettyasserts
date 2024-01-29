@@ -5,6 +5,8 @@ use anyhow;
 
 use std::path::PathBuf;
 use std::fs;
+use std::fs::File;
+use std::io::Write;
 use std::rc::Rc;
 
 // The actual parser is over here
@@ -26,8 +28,8 @@ struct Opt {
     #[structopt(parse(from_os_str=parse_rc_path))]
     input: Rc<PathBuf>,
 
-    #[structopt(short, long, required=true)]
-    output: PathBuf,
+    #[structopt(short, long)]
+    output: Option<PathBuf>,
 
     #[structopt(long)]
     dump_tokens: bool,
@@ -67,6 +69,17 @@ fn main() -> Result<(), anyhow::Error> {
     if opt.dump_tree {
         println!("{:#?}", tree);
         std::process::exit(0);
+    }
+
+    // flatten and write to file
+    if let Some(output) = opt.output {
+        let mut f = File::create(output)?;
+        tree.try_visit_tokens(|tok| {
+            // make sure to keep whitespace!
+            write!(f, "{}", tok.ws)?;
+            write!(f, "{}", tok.tok)?;
+            Ok::<(), anyhow::Error>(())
+        })?;
     }
 
     Ok(())

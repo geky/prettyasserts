@@ -205,3 +205,131 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
 
     Ok(Tree(list, ws))
 }
+
+
+// utils
+
+fn list_try_map_tokens<'a, E>(
+    list: List<'a>,
+    // this recursion makes the compiler explode if generic!
+    mut cb: &mut dyn FnMut(Token<'a>) -> Result<Token<'a>, E>
+) -> Result<List<'a>, E> {
+    let mut list_ = vec![];
+    for (expr, comma) in list.into_iter() {
+        list_.push((
+            match expr {
+                Some(expr) => Some(expr._try_map_tokens(&mut cb)?),
+                None => None,
+            },
+            comma.map(&mut cb).transpose()?
+        ));
+    }
+    Ok(list_)
+}
+
+impl<'a> Tree<'a> {
+    pub fn visit_tokens<F>(&self, mut cb: F)
+    where
+        F: FnMut(&Token<'a>)
+    {
+        self.try_visit_tokens(|tok| Ok::<_,()>(cb(tok))).unwrap()
+    }
+
+    // hacky, expensive! but easier than rewritting all of these pesky
+    // match statements
+    pub fn try_visit_tokens<F, E>(&self, mut cb: F) -> Result<(), E>
+    where
+        F: FnMut(&Token<'a>) -> Result<(), E>
+    {
+        self.clone()._try_map_tokens(&mut |tok| {
+            cb(&tok)?;
+            Ok(tok)
+        })?;
+        Ok(())
+    }
+
+    pub fn map_tokens<F>(self, mut cb: F) -> Self
+    where
+        F: FnMut(Token<'a>) -> Token<'a>
+    {
+        self._try_map_tokens(&mut |tok| Ok::<_,()>(cb(tok))).unwrap()
+    }
+
+    pub fn try_map_tokens<F, E>(self, mut cb: F) -> Result<Self, E>
+    where
+        F: FnMut(Token<'a>) -> Result<Token<'a>, E>
+    {
+        self._try_map_tokens(&mut cb)
+    }
+
+    fn _try_map_tokens<E>(
+        self,
+        // this recursion makes the compiler explode if generic!
+        mut cb: &mut dyn FnMut(Token<'a>) -> Result<Token<'a>, E>
+    ) -> Result<Self, E> {
+        Ok(Tree(
+            list_try_map_tokens(self.0, &mut cb)?,
+            self.1.map(&mut cb).transpose()?,
+        ))
+    }
+}
+
+impl<'a> Expr<'a> {
+    fn _try_map_tokens<E>(
+        self,
+        // this recursion makes the compiler explode if generic!
+        mut cb: &mut dyn FnMut(Token<'a>) -> Result<Token<'a>, E>
+    ) -> Result<Self, E> {
+        Ok(match self {
+            Expr::Symbol(tok) => Expr::Symbol(cb(tok)?),
+            Expr::Number(tok) => Expr::Number(cb(tok)?),
+            Expr::String(tok) => Expr::String(cb(tok)?),
+            Expr::Decl(expr, tok) => Expr::Decl(
+                Box::new(expr._try_map_tokens(&mut cb)?),
+                cb(tok)?,
+            ),
+            Expr::Call(expr, l, list, r) => Expr::Call(
+                Box::new(expr._try_map_tokens(&mut cb)?),
+                cb(l)?,
+                list_try_map_tokens(list, &mut cb)?,
+                cb(r)?,
+            ),
+            Expr::Index(expr, l, list, r) => Expr::Index(
+                Box::new(expr._try_map_tokens(&mut cb)?),
+                cb(l)?,
+                list_try_map_tokens(list, &mut cb)?,
+                cb(r)?,
+            ),
+            Expr::Neg(tok, expr) => Expr::Neg(
+                cb(tok)?,
+                Box::new(expr._try_map_tokens(&mut cb)?),
+            ),
+            Expr::AddrOf(tok, expr) => Expr::AddrOf(
+                cb(tok)?,
+                Box::new(expr._try_map_tokens(&mut cb)?),
+            ),
+            Expr::Dot(lh, tok, rh) => Expr::Dot(
+                Box::new(lh._try_map_tokens(&mut cb)?),
+                cb(tok)?,
+                Box::new(rh._try_map_tokens(&mut cb)?),
+            ),
+            Expr::Assign(lh, tok, rh) => Expr::Assign(
+                Box::new(lh._try_map_tokens(&mut cb)?),
+                cb(tok)?,
+                Box::new(rh._try_map_tokens(&mut cb)?),
+            ),
+            Expr::BigArrow(lh, tok, rh) => Expr::BigArrow(
+                Box::new(lh._try_map_tokens(&mut cb)?),
+                cb(tok)?,
+                Box::new(rh._try_map_tokens(&mut cb)?),
+            ),
+            Expr::Squiggle(l, list, r) => Expr::Squiggle(
+                cb(l)?,
+                list_try_map_tokens(list, &mut cb)?,
+                cb(r)?,
+            ),
+        })
+    }
+}
+
+

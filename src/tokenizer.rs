@@ -133,7 +133,8 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn skip_ws(&mut self, n: usize) {
-        self._next(n)
+        self._next(n);
+        self.found = "";
     }
 
     fn munch(&mut self, tt: Tt) -> Token<'a> {
