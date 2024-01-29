@@ -207,26 +207,9 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
 }
 
 
-// utils
+//// utils ///
 
-fn list_try_map_tokens<'a, E>(
-    list: List<'a>,
-    // this recursion makes the compiler explode if generic!
-    mut cb: &mut dyn FnMut(Token<'a>) -> Result<Token<'a>, E>
-) -> Result<List<'a>, E> {
-    let mut list_ = vec![];
-    for (expr, comma) in list.into_iter() {
-        list_.push((
-            match expr {
-                Some(expr) => Some(expr._try_map_tokens(&mut cb)?),
-                None => None,
-            },
-            comma.map(&mut cb).transpose()?
-        ));
-    }
-    Ok(list_)
-}
-
+// token traversal
 impl<'a> Tree<'a> {
     pub fn visit_tokens<F>(&self, mut cb: F)
     where
@@ -272,6 +255,24 @@ impl<'a> Tree<'a> {
             self.1.map(&mut cb).transpose()?,
         ))
     }
+}
+
+fn list_try_map_tokens<'a, E>(
+    list: List<'a>,
+    // this recursion makes the compiler explode if generic!
+    mut cb: &mut dyn FnMut(Token<'a>) -> Result<Token<'a>, E>
+) -> Result<List<'a>, E> {
+    let mut list_ = vec![];
+    for (expr, comma) in list.into_iter() {
+        list_.push((
+            match expr {
+                Some(expr) => Some(expr._try_map_tokens(&mut cb)?),
+                None => None,
+            },
+            comma.map(&mut cb).transpose()?
+        ));
+    }
+    Ok(list_)
 }
 
 impl<'a> Expr<'a> {
@@ -333,3 +334,127 @@ impl<'a> Expr<'a> {
 }
 
 
+// expr traversal
+impl<'a> Tree<'a> {
+    pub fn visit_exprs<F>(&self, mut cb: F)
+    where
+        F: FnMut(&Expr<'a>)
+    {
+        self.try_visit_exprs(|expr| Ok::<_,()>(cb(expr))).unwrap()
+    }
+
+    // hacky, expensive! but easier than rewritting all of these pesky
+    // match statements
+    pub fn try_visit_exprs<F, E>(&self, mut cb: F) -> Result<(), E>
+    where
+        F: FnMut(&Expr<'a>) -> Result<(), E>
+    {
+        self.clone()._try_map_exprs(&mut |expr| {
+            cb(&expr)?;
+            Ok(expr)
+        })?;
+        Ok(())
+    }
+
+    pub fn map_exprs<F>(self, mut cb: F) -> Self
+    where
+        F: FnMut(Expr<'a>) -> Expr<'a>
+    {
+        self._try_map_exprs(&mut |expr| Ok::<_,()>(cb(expr))).unwrap()
+    }
+
+    pub fn try_map_exprs<F, E>(self, mut cb: F) -> Result<Self, E>
+    where
+        F: FnMut(Expr<'a>) -> Result<Expr<'a>, E>
+    {
+        self._try_map_exprs(&mut cb)
+    }
+
+    fn _try_map_exprs<E>(
+        self,
+        // this recursion makes the compiler explode if generic!
+        mut cb: &mut dyn FnMut(Expr<'a>) -> Result<Expr<'a>, E>
+    ) -> Result<Self, E> {
+        Ok(Tree(
+            list_try_map_exprs(self.0, &mut cb)?,
+            self.1,
+        ))
+    }
+}
+
+fn list_try_map_exprs<'a, E>(
+    list: List<'a>,
+    // this recursion makes the compiler explode if generic!
+    mut cb: &mut dyn FnMut(Expr<'a>) -> Result<Expr<'a>, E>
+) -> Result<List<'a>, E> {
+    let mut list_ = vec![];
+    for (expr, comma) in list.into_iter() {
+        list_.push((
+            expr.map(&mut cb).transpose()?,
+            comma
+        ));
+    }
+    Ok(list_)
+}
+
+
+impl<'a> Expr<'a> {
+    fn _try_map_exprs<E>(
+        self,
+        // this recursion makes the compiler explode if generic!
+        mut cb: &mut dyn FnMut(Expr<'a>) -> Result<Expr<'a>, E>
+    ) -> Result<Self, E> {
+        // map bottom-up so we are always guaranteed to make progress
+        let expr = match self {
+            Expr::Symbol(tok) => Expr::Symbol(tok),
+            Expr::Number(tok) => Expr::Number(tok),
+            Expr::String(tok) => Expr::String(tok),
+            Expr::Decl(expr, tok) => Expr::Decl(
+                Box::new(expr._try_map_exprs(&mut cb)?),
+                tok,
+            ),
+            Expr::Call(expr, l, list, r) => Expr::Call(
+                Box::new(expr._try_map_exprs(&mut cb)?),
+                l,
+                list_try_map_exprs(list, &mut cb)?,
+                r,
+            ),
+            Expr::Index(expr, l, list, r) => Expr::Index(
+                Box::new(expr._try_map_exprs(&mut cb)?),
+                l,
+                list_try_map_exprs(list, &mut cb)?,
+                r,
+            ),
+            Expr::Neg(tok, expr) => Expr::Neg(
+                tok,
+                Box::new(expr._try_map_exprs(&mut cb)?),
+            ),
+            Expr::AddrOf(tok, expr) => Expr::AddrOf(
+                tok,
+                Box::new(expr._try_map_exprs(&mut cb)?),
+            ),
+            Expr::Dot(lh, tok, rh) => Expr::Dot(
+                Box::new(lh._try_map_exprs(&mut cb)?),
+                tok,
+                Box::new(rh._try_map_exprs(&mut cb)?),
+            ),
+            Expr::Assign(lh, tok, rh) => Expr::Assign(
+                Box::new(lh._try_map_exprs(&mut cb)?),
+                tok,
+                Box::new(rh._try_map_exprs(&mut cb)?),
+            ),
+            Expr::BigArrow(lh, tok, rh) => Expr::BigArrow(
+                Box::new(lh._try_map_exprs(&mut cb)?),
+                tok,
+                Box::new(rh._try_map_exprs(&mut cb)?),
+            ),
+            Expr::Squiggle(l, list, r) => Expr::Squiggle(
+                l,
+                list_try_map_exprs(list, &mut cb)?,
+                r,
+            ),
+        };
+
+        cb(expr)
+    }
+}
