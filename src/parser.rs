@@ -18,8 +18,11 @@ pub enum Expr<'a> {
     Decl(Box<Expr<'a>>, Token<'a>),
     Call(Box<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
     Index(Box<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
+    Block(Box<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
     Unary(Token<'a>, Box<Expr<'a>>),
+    Suffnary(Box<Expr<'a>>, Token<'a>),
     Binary(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
+    Ternary(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
     Squiggle(Token<'a>, List<'a>, Token<'a>),
 }
 
@@ -90,6 +93,14 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
             Some(Tt::Sym) => Expr::Sym(p.munch()),
             Some(Tt::Number) => Expr::Lit(p.munch()),
             Some(Tt::String) => Expr::Lit(p.munch()),
+            Some(Tt::Tilde) => Expr::Unary(
+                p.munch(),
+                Box::new(parse_expr_required(p)?),
+            ),
+            Some(Tt::Add) => Expr::Unary(
+                p.munch(),
+                Box::new(parse_expr_required(p)?),
+            ),
             Some(Tt::Sub) => Expr::Unary(
                 p.munch(),
                 Box::new(parse_expr_required(p)?),
@@ -101,6 +112,18 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
             Some(Tt::Dot) => Expr::Unary(
                 p.munch(),
                 Box::new(parse_expr_required(p)?),
+            ),
+            Some(Tt::Not) => Expr::Unary(
+                p.munch(),
+                Box::new(parse_expr_required(p)?),
+            ),
+            Some(Tt::LParen) => Expr::Squiggle(
+                p.munch(),
+                parse_list(p)?,
+                match p.tt() {
+                    Some(Tt::RParen) => p.munch(),
+                    _ => return Err(p.unexpected()),
+                },
             ),
             Some(Tt::LSquiggle) => Expr::Squiggle(
                 p.munch(),
@@ -116,7 +139,46 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
         loop {
             lh = match p.tt() {
                 Some(Tt::Sym) => Expr::Decl(Box::new(lh), p.munch()),
+                Some(Tt::PlusPlus) => Expr::Suffnary(
+                    Box::new(lh),
+                    p.munch(),
+                ),
                 Some(Tt::Dot) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Splat) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Slash) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Mod) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Add) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Sub) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::And) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::OrOr) => Expr::Binary(
                     Box::new(lh),
                     p.munch(),
                     Box::new(parse_expr_required(p)?),
@@ -126,7 +188,47 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
                     p.munch(),
                     Box::new(parse_expr_required(p)?),
                 ),
+                Some(Tt::Ne) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Le) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Ge) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Lt) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Gt) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
                 Some(Tt::Assign) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::AddAssign) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::SubAssign) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Arrow) => Expr::Binary(
                     Box::new(lh),
                     p.munch(),
                     Box::new(parse_expr_required(p)?),
@@ -134,6 +236,16 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
                 Some(Tt::BigArrow) => Expr::Binary(
                     Box::new(lh),
                     p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::Question) => Expr::Ternary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                    match p.tt() {
+                        Some(Tt::Colon) => p.munch(),
+                        _ => return Err(p.unexpected()),
+                    },
                     Box::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::LParen) => Expr::Call(
@@ -151,6 +263,15 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
                     parse_list(p)?,
                     match p.tt() {
                         Some(Tt::RSquare) => p.munch(),
+                        _ => return Err(p.unexpected()),
+                    },
+                ),
+                Some(Tt::LSquiggle) => Expr::Block(
+                    Box::new(lh),
+                    p.munch(),
+                    parse_list(p)?,
+                    match p.tt() {
+                        Some(Tt::RSquiggle) => p.munch(),
                         _ => return Err(p.unexpected()),
                     },
                 ),
@@ -379,13 +500,30 @@ impl<'a> Expr<'a> {
                 list_try_map_tokens(list, &mut cb)?,
                 cb(r)?,
             ),
+            Expr::Block(expr, l, list, r) => Expr::Block(
+                Box::new(expr._try_map_tokens(&mut cb)?),
+                cb(l)?,
+                list_try_map_tokens(list, &mut cb)?,
+                cb(r)?,
+            ),
             Expr::Unary(tok, expr) => Expr::Unary(
                 cb(tok)?,
                 Box::new(expr._try_map_tokens(&mut cb)?),
             ),
+            Expr::Suffnary(expr, tok) => Expr::Suffnary(
+                Box::new(expr._try_map_tokens(&mut cb)?),
+                cb(tok)?,
+            ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
                 Box::new(lh._try_map_tokens(&mut cb)?),
                 cb(tok)?,
+                Box::new(rh._try_map_tokens(&mut cb)?),
+            ),
+            Expr::Ternary(lh, tok, mh, tok_, rh) => Expr::Ternary(
+                Box::new(lh._try_map_tokens(&mut cb)?),
+                cb(tok)?,
+                Box::new(mh._try_map_tokens(&mut cb)?),
+                cb(tok_)?,
                 Box::new(rh._try_map_tokens(&mut cb)?),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(
@@ -522,13 +660,30 @@ impl<'a> Expr<'a> {
                 list_try_map_exprs(list, &mut cb)?,
                 r,
             ),
+            Expr::Block(expr, l, list, r) => Expr::Block(
+                Box::new(expr._try_map_exprs(&mut cb)?),
+                l,
+                list_try_map_exprs(list, &mut cb)?,
+                r,
+            ),
             Expr::Unary(tok, expr) => Expr::Unary(
                 tok,
                 Box::new(expr._try_map_exprs(&mut cb)?),
             ),
+            Expr::Suffnary(expr, tok) => Expr::Suffnary(
+                Box::new(expr._try_map_exprs(&mut cb)?),
+                tok,
+            ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
                 Box::new(lh._try_map_exprs(&mut cb)?),
                 tok,
+                Box::new(rh._try_map_exprs(&mut cb)?),
+            ),
+            Expr::Ternary(lh, tok, mh, tok_, rh) => Expr::Ternary(
+                Box::new(lh._try_map_exprs(&mut cb)?),
+                tok,
+                Box::new(mh._try_map_exprs(&mut cb)?),
+                tok_,
                 Box::new(rh._try_map_exprs(&mut cb)?),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(

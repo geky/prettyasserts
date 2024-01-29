@@ -7,15 +7,20 @@ use either::{Left, Right};
 use std::path::PathBuf;
 use std::fs;
 use std::fs::File;
-use std::io::Write;
 use std::rc::Rc;
 use std::ops::Deref;
 use std::borrow::Cow;
+use std::io::BufReader;
+use std::io::BufRead;
+use std::io::BufWriter;
+use std::io::Write;
+
 
 // The actual parser is over here
 mod errors;
 mod tokenizer;
 use tokenizer::tokenize;
+use tokenizer::tokenize_at;
 use tokenizer::Token;
 use tokenizer::Tt;
 mod parser;
@@ -134,58 +139,145 @@ struct Opt {
 
     #[structopt(long)]
     dump_modified: bool,
+
+    #[structopt(short="t", long)]
+    in_toml: bool,
 }
 
 // entry point
 fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::from_args();
-    let input = fs::read_to_string(opt.input.as_ref())?;
 
-    // tokenize
-    let tokens = match tokenize(&opt.input, &input) {
-        Ok(tokens) => tokens,
-        Err(err) => {
-            err.print_context();
-            std::process::exit(1);
+    if opt.in_toml {
+        let f = File::open(opt.input.as_ref())?;
+        let f = BufReader::new(f);
+        if let Some(output) = opt.output {
+            let mut f_ = File::create(output)?;
+            let mut line = 1;
+            let mut c_line = 1;
+            let mut in_c = false;
+            let mut chunk = String::new();
+            for line_ in f.lines() {
+                let line_ = line_?;
+                // switch modes
+                if in_c && line_.starts_with("'''") {
+                    // tokenize
+                    let tokens = match tokenize_at(
+                        &opt.input, c_line, 1, &chunk
+                    ) {
+                        Ok(tokens) => tokens,
+                        Err(err) => {
+                            err.print_context();
+                            std::process::exit(1);
+                        }
+                    };
+
+                    if opt.dump_tokens {
+                        println!("{:#?}", tokens);
+                        std::process::exit(0);
+                    }
+
+                    // parse
+                    let tree = match parse(&tokens) {
+                        Ok(tree) => tree,
+                        Err(err) => {
+                            err.print_context();
+                            std::process::exit(1);
+                        }
+                    };
+
+                    if opt.dump_tree {
+                        println!("{:#?}", tree);
+                        std::process::exit(0);
+                    }
+
+                    // modify!
+                    let tree = tree.try_map_exprs(modify)?;
+
+                    if opt.dump_modified {
+                        println!("{:#?}", tree);
+                        std::process::exit(0);
+                    }
+
+                    // flatten and write to file
+                    tree.try_visit_tokens(|tok| {
+                        // make sure to keep whitespace!
+                        write!(f_, "{}", tok.ws)?;
+                        write!(f_, "{}", tok.tok)?;
+                        Ok::<(), anyhow::Error>(())
+                    })?;
+
+                    in_c = false;
+                    chunk.clear();
+                    writeln!(f_, "{}", line_)?;
+                } else if in_c {
+                    chunk.push_str(&line_);
+                    chunk.push('\n');
+
+                } else {
+                    writeln!(f_, "{}", line_)?;
+
+                    // switch modes
+                    if line_.starts_with("code = '''") {
+                        in_c = true;
+                        c_line = line+1;
+                        chunk.clear();
+                    }
+                }
+                line += 1;
+            }
         }
-    };
 
-    if opt.dump_tokens {
-        println!("{:#?}", tokens);
-        std::process::exit(0);
-    }
+    } else {
+        let input = fs::read_to_string(opt.input.as_ref())?;
 
-    // parse
-    let tree = match parse(&tokens) {
-        Ok(tree) => tree,
-        Err(err) => {
-            err.print_context();
-            std::process::exit(1);
+        // tokenize
+        let tokens = match tokenize(&opt.input, &input) {
+            Ok(tokens) => tokens,
+            Err(err) => {
+                err.print_context();
+                std::process::exit(1);
+            }
+        };
+
+        if opt.dump_tokens {
+            println!("{:#?}", tokens);
+            std::process::exit(0);
         }
-    };
 
-    if opt.dump_tree {
-        println!("{:#?}", tree);
-        std::process::exit(0);
-    }
+        // parse
+        let tree = match parse(&tokens) {
+            Ok(tree) => tree,
+            Err(err) => {
+                err.print_context();
+                std::process::exit(1);
+            }
+        };
 
-    // modify!
-    let tree = tree.try_map_exprs(modify)?;
+        if opt.dump_tree {
+            println!("{:#?}", tree);
+            std::process::exit(0);
+        }
 
-    if opt.dump_modified {
-        println!("{:#?}", tree);
-        std::process::exit(0);
-    }
+        // modify!
+        let tree = tree.try_map_exprs(modify)?;
 
-    // flatten and write to file
-    if let Some(output) = opt.output {
-        let mut f = File::create(output)?;
-        tree.try_visit_tokens(|tok| {
-            // make sure to keep whitespace!
-            write!(f, "{}", tok.ws)?;
-            write!(f, "{}", tok.tok)?;
-            Ok::<(), anyhow::Error>(())
-        })?;
+        if opt.dump_modified {
+            println!("{:#?}", tree);
+            std::process::exit(0);
+        }
+
+        // flatten and write to file
+        if let Some(output) = opt.output {
+            let f = File::create(output)?;
+            let mut f = BufWriter::new(f);
+            tree.try_visit_tokens(|tok| {
+                // make sure to keep whitespace!
+                write!(f, "{}", tok.ws)?;
+                write!(f, "{}", tok.tok)?;
+                Ok::<(), anyhow::Error>(())
+            })?;
+        }
     }
 
     Ok(())

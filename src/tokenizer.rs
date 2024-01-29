@@ -25,12 +25,28 @@ pub enum Tt {
     RSquare,    // ]
     BigArrow,   // =>
     Eq,         // ==
+    Ne,         // !=
     Assign,     // =
+    AddAssign,  // +=
+    SubAssign,  // -=
+    Le,         // <=
+    Ge,         // >=
+    Lt,         // <
+    Gt,         // >
     Dot,        // .
+    OrOr,       // ||
     And,        // &
     Splat,      // *
+    Slash,      // /
+    Mod,        // %
     Arrow,      // ->
+    PlusPlus,   // ++
+    Tilde,      // ~
+    Add,        // +
     Sub,        // -
+    Not,        // !
+    Question,   // ?
+    Colon,      // :
     Comma,      // ,
     Semi,       // ;
     TrailingWs,
@@ -103,11 +119,16 @@ struct Tokenizer<'a> {
 }
 
 impl<'a> Tokenizer<'a> {
-    fn new(file: &Rc<PathBuf>, input: &'a str) -> Self {
+    fn new(
+        file: &Rc<PathBuf>,
+        line: usize,
+        col: usize,
+        input: &'a str
+    ) -> Self {
         Self{
             file: file.clone(),
-            line: 1,
-            col: 1,
+            line: line,
+            col: col,
             input: input,
             i: 0,
             ws_i: 0,
@@ -195,8 +216,17 @@ pub fn tokenize<'a>(
     file: &Rc<PathBuf>,
     input: &'a str
 ) -> Result<Vec<Token<'a>>, ParseError> {
+    tokenize_at(file, 1, 1, input)
+}
+
+pub fn tokenize_at<'a>(
+    file: &Rc<PathBuf>,
+    line: usize,
+    col: usize,
+    input: &'a str
+) -> Result<Vec<Token<'a>>, ParseError> {
     let mut tokens = vec![];
-    let mut t = Tokenizer::new(file, input);
+    let mut t = Tokenizer::new(file, line, col, input);
 
     while !t.is_done() {
         // parse whitespace separately
@@ -226,22 +256,38 @@ pub fn tokenize<'a>(
                 t.munch(Tt::String)
             }
             // tokens
-            _ if t.matches(r"\(") => t.munch(Tt::LParen),
-            _ if t.matches(r"\)") => t.munch(Tt::RParen),
-            _ if t.matches(r"\{") => t.munch(Tt::LSquiggle),
-            _ if t.matches(r"\}") => t.munch(Tt::RSquiggle),
-            _ if t.matches(r"\[") => t.munch(Tt::LSquare),
-            _ if t.matches(r"\]") => t.munch(Tt::RSquare),
-            _ if t.matches(r"=>") => t.munch(Tt::BigArrow),
-            _ if t.matches(r"==") => t.munch(Tt::Eq),
-            _ if t.matches(r"=")  => t.munch(Tt::Assign),
-            _ if t.matches(r"\.") => t.munch(Tt::Dot),
-            _ if t.matches(r"&")  => t.munch(Tt::And),
-            _ if t.matches(r"\*") => t.munch(Tt::Splat),
-            _ if t.matches(r"->") => t.munch(Tt::Arrow),
-            _ if t.matches(r"-")  => t.munch(Tt::Sub),
-            _ if t.matches(r",")  => t.munch(Tt::Comma),
-            _ if t.matches(r";")  => t.munch(Tt::Semi),
+            _ if t.matches(r"\(")   => t.munch(Tt::LParen),
+            _ if t.matches(r"\)")   => t.munch(Tt::RParen),
+            _ if t.matches(r"\{")   => t.munch(Tt::LSquiggle),
+            _ if t.matches(r"\}")   => t.munch(Tt::RSquiggle),
+            _ if t.matches(r"\[")   => t.munch(Tt::LSquare),
+            _ if t.matches(r"\]")   => t.munch(Tt::RSquare),
+            _ if t.matches(r"=>")   => t.munch(Tt::BigArrow),
+            _ if t.matches(r"==")   => t.munch(Tt::Eq),
+            _ if t.matches(r"!=")   => t.munch(Tt::Ne),
+            _ if t.matches(r"=")    => t.munch(Tt::Assign),
+            _ if t.matches(r"\+=")  => t.munch(Tt::AddAssign),
+            _ if t.matches(r"-=")   => t.munch(Tt::SubAssign),
+            _ if t.matches(r"<=")   => t.munch(Tt::Le),
+            _ if t.matches(r">=")   => t.munch(Tt::Ge),
+            _ if t.matches(r"<")    => t.munch(Tt::Lt),
+            _ if t.matches(r">")    => t.munch(Tt::Gt),
+            _ if t.matches(r"\.")   => t.munch(Tt::Dot),
+            _ if t.matches(r"\|\|") => t.munch(Tt::OrOr),
+            _ if t.matches(r"&")    => t.munch(Tt::And),
+            _ if t.matches(r"\*")   => t.munch(Tt::Splat),
+            _ if t.matches(r"/")    => t.munch(Tt::Slash),
+            _ if t.matches(r"%")    => t.munch(Tt::Mod),
+            _ if t.matches(r"->")   => t.munch(Tt::Arrow),
+            _ if t.matches(r"\+\+") => t.munch(Tt::PlusPlus),
+            _ if t.matches(r"~")    => t.munch(Tt::Tilde),
+            _ if t.matches(r"\+")   => t.munch(Tt::Add),
+            _ if t.matches(r"-")    => t.munch(Tt::Sub),
+            _ if t.matches(r"!")    => t.munch(Tt::Not),
+            _ if t.matches(r"\?")   => t.munch(Tt::Question),
+            _ if t.matches(r":")    => t.munch(Tt::Colon),
+            _ if t.matches(r",")    => t.munch(Tt::Comma),
+            _ if t.matches(r";")    => t.munch(Tt::Semi),
             // wait, end of input?
             "" => t.munch(Tt::TrailingWs),
             // unknown token
