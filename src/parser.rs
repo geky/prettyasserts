@@ -11,17 +11,13 @@ type List<'a> = Vec<(Option<Expr<'a>>, Option<Token<'a>>)>;
 
 #[derive(Debug, Clone)]
 pub enum Expr<'a> {
-    Symbol(Token<'a>),
-    Number(Token<'a>),
-    String(Token<'a>),
+    Sym(Token<'a>),
+    Lit(Token<'a>),
     Decl(Box<Expr<'a>>, Token<'a>),
     Call(Box<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
     Index(Box<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
-    Neg(Token<'a>, Box<Expr<'a>>),
-    AddrOf(Token<'a>, Box<Expr<'a>>),
-    Dot(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
-    Assign(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
-    BigArrow(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
+    Unary(Token<'a>, Box<Expr<'a>>),
+    Binary(Box<Expr<'a>>, Token<'a>, Box<Expr<'a>>),
     Squiggle(Token<'a>, List<'a>, Token<'a>),
 }
 
@@ -89,18 +85,18 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
         p: &mut Parser<'a, '_>
     ) -> Result<Option<Expr<'a>>, ParseError> {
         let mut lh = match p.tt() {
-            Some(Tt::Symbol) => Expr::Symbol(p.munch()),
-            Some(Tt::Number) => Expr::Number(p.munch()),
-            Some(Tt::String) => Expr::String(p.munch()),
-            Some(Tt::Sub) => Expr::Neg(
+            Some(Tt::Sym) => Expr::Sym(p.munch()),
+            Some(Tt::Number) => Expr::Lit(p.munch()),
+            Some(Tt::String) => Expr::Lit(p.munch()),
+            Some(Tt::Sub) => Expr::Unary(
                 p.munch(),
                 Box::new(parse_expr_required(p)?),
             ),
-            Some(Tt::And) => Expr::AddrOf(
+            Some(Tt::And) => Expr::Unary(
                 p.munch(),
                 Box::new(parse_expr_required(p)?),
             ),
-            Some(Tt::Dot) => Expr::AddrOf(
+            Some(Tt::Dot) => Expr::Unary(
                 p.munch(),
                 Box::new(parse_expr_required(p)?),
             ),
@@ -117,18 +113,23 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
 
         loop {
             lh = match p.tt() {
-                Some(Tt::Symbol) => Expr::Decl(Box::new(lh), p.munch()),
-                Some(Tt::Dot) => Expr::Dot(
+                Some(Tt::Sym) => Expr::Decl(Box::new(lh), p.munch()),
+                Some(Tt::Dot) => Expr::Binary(
                     Box::new(lh),
                     p.munch(),
                     Box::new(parse_expr_required(p)?),
                 ),
-                Some(Tt::Eq) => Expr::Assign(
+                Some(Tt::Eq) => Expr::Binary(
                     Box::new(lh),
                     p.munch(),
                     Box::new(parse_expr_required(p)?),
                 ),
-                Some(Tt::BigArrow) => Expr::BigArrow(
+                Some(Tt::Assign) => Expr::Binary(
+                    Box::new(lh),
+                    p.munch(),
+                    Box::new(parse_expr_required(p)?),
+                ),
+                Some(Tt::BigArrow) => Expr::Binary(
                     Box::new(lh),
                     p.munch(),
                     Box::new(parse_expr_required(p)?),
@@ -276,15 +277,48 @@ fn list_try_map_tokens<'a, E>(
 }
 
 impl<'a> Expr<'a> {
+    pub fn visit_tokens<F>(&self, mut cb: F)
+    where
+        F: FnMut(&Token<'a>)
+    {
+        self.try_visit_tokens(|tok| Ok::<_,()>(cb(tok))).unwrap()
+    }
+
+    // hacky, expensive! but easier than rewritting all of these pesky
+    // match statements
+    pub fn try_visit_tokens<F, E>(&self, mut cb: F) -> Result<(), E>
+    where
+        F: FnMut(&Token<'a>) -> Result<(), E>
+    {
+        self.clone()._try_map_tokens(&mut |tok| {
+            cb(&tok)?;
+            Ok(tok)
+        })?;
+        Ok(())
+    }
+
+    pub fn map_tokens<F>(self, mut cb: F) -> Self
+    where
+        F: FnMut(Token<'a>) -> Token<'a>
+    {
+        self._try_map_tokens(&mut |tok| Ok::<_,()>(cb(tok))).unwrap()
+    }
+
+    pub fn try_map_tokens<F, E>(self, mut cb: F) -> Result<Self, E>
+    where
+        F: FnMut(Token<'a>) -> Result<Token<'a>, E>
+    {
+        self._try_map_tokens(&mut cb)
+    }
+
     fn _try_map_tokens<E>(
         self,
         // this recursion makes the compiler explode if generic!
         mut cb: &mut dyn FnMut(Token<'a>) -> Result<Token<'a>, E>
     ) -> Result<Self, E> {
         Ok(match self {
-            Expr::Symbol(tok) => Expr::Symbol(cb(tok)?),
-            Expr::Number(tok) => Expr::Number(cb(tok)?),
-            Expr::String(tok) => Expr::String(cb(tok)?),
+            Expr::Sym(tok) => Expr::Sym(cb(tok)?),
+            Expr::Lit(tok) => Expr::Lit(cb(tok)?),
             Expr::Decl(expr, tok) => Expr::Decl(
                 Box::new(expr._try_map_tokens(&mut cb)?),
                 cb(tok)?,
@@ -301,25 +335,11 @@ impl<'a> Expr<'a> {
                 list_try_map_tokens(list, &mut cb)?,
                 cb(r)?,
             ),
-            Expr::Neg(tok, expr) => Expr::Neg(
+            Expr::Unary(tok, expr) => Expr::Unary(
                 cb(tok)?,
                 Box::new(expr._try_map_tokens(&mut cb)?),
             ),
-            Expr::AddrOf(tok, expr) => Expr::AddrOf(
-                cb(tok)?,
-                Box::new(expr._try_map_tokens(&mut cb)?),
-            ),
-            Expr::Dot(lh, tok, rh) => Expr::Dot(
-                Box::new(lh._try_map_tokens(&mut cb)?),
-                cb(tok)?,
-                Box::new(rh._try_map_tokens(&mut cb)?),
-            ),
-            Expr::Assign(lh, tok, rh) => Expr::Assign(
-                Box::new(lh._try_map_tokens(&mut cb)?),
-                cb(tok)?,
-                Box::new(rh._try_map_tokens(&mut cb)?),
-            ),
-            Expr::BigArrow(lh, tok, rh) => Expr::BigArrow(
+            Expr::Binary(lh, tok, rh) => Expr::Binary(
                 Box::new(lh._try_map_tokens(&mut cb)?),
                 cb(tok)?,
                 Box::new(rh._try_map_tokens(&mut cb)?),
@@ -399,6 +419,40 @@ fn list_try_map_exprs<'a, E>(
 
 
 impl<'a> Expr<'a> {
+    pub fn visit_exprs<F>(&self, mut cb: F)
+    where
+        F: FnMut(&Expr<'a>)
+    {
+        self.try_visit_exprs(|expr| Ok::<_,()>(cb(expr))).unwrap()
+    }
+
+    // hacky, expensive! but easier than rewritting all of these pesky
+    // match statements
+    pub fn try_visit_exprs<F, E>(&self, mut cb: F) -> Result<(), E>
+    where
+        F: FnMut(&Expr<'a>) -> Result<(), E>
+    {
+        self.clone()._try_map_exprs(&mut |expr| {
+            cb(&expr)?;
+            Ok(expr)
+        })?;
+        Ok(())
+    }
+
+    pub fn map_exprs<F>(self, mut cb: F) -> Self
+    where
+        F: FnMut(Expr<'a>) -> Expr<'a>
+    {
+        self._try_map_exprs(&mut |expr| Ok::<_,()>(cb(expr))).unwrap()
+    }
+
+    pub fn try_map_exprs<F, E>(self, mut cb: F) -> Result<Self, E>
+    where
+        F: FnMut(Expr<'a>) -> Result<Expr<'a>, E>
+    {
+        self._try_map_exprs(&mut cb)
+    }
+
     fn _try_map_exprs<E>(
         self,
         // this recursion makes the compiler explode if generic!
@@ -406,9 +460,8 @@ impl<'a> Expr<'a> {
     ) -> Result<Self, E> {
         // map bottom-up so we are always guaranteed to make progress
         let expr = match self {
-            Expr::Symbol(tok) => Expr::Symbol(tok),
-            Expr::Number(tok) => Expr::Number(tok),
-            Expr::String(tok) => Expr::String(tok),
+            Expr::Sym(tok) => Expr::Sym(tok),
+            Expr::Lit(tok) => Expr::Lit(tok),
             Expr::Decl(expr, tok) => Expr::Decl(
                 Box::new(expr._try_map_exprs(&mut cb)?),
                 tok,
@@ -425,25 +478,11 @@ impl<'a> Expr<'a> {
                 list_try_map_exprs(list, &mut cb)?,
                 r,
             ),
-            Expr::Neg(tok, expr) => Expr::Neg(
+            Expr::Unary(tok, expr) => Expr::Unary(
                 tok,
                 Box::new(expr._try_map_exprs(&mut cb)?),
             ),
-            Expr::AddrOf(tok, expr) => Expr::AddrOf(
-                tok,
-                Box::new(expr._try_map_exprs(&mut cb)?),
-            ),
-            Expr::Dot(lh, tok, rh) => Expr::Dot(
-                Box::new(lh._try_map_exprs(&mut cb)?),
-                tok,
-                Box::new(rh._try_map_exprs(&mut cb)?),
-            ),
-            Expr::Assign(lh, tok, rh) => Expr::Assign(
-                Box::new(lh._try_map_exprs(&mut cb)?),
-                tok,
-                Box::new(rh._try_map_exprs(&mut cb)?),
-            ),
-            Expr::BigArrow(lh, tok, rh) => Expr::BigArrow(
+            Expr::Binary(lh, tok, rh) => Expr::Binary(
                 Box::new(lh._try_map_exprs(&mut cb)?),
                 tok,
                 Box::new(rh._try_map_exprs(&mut cb)?),

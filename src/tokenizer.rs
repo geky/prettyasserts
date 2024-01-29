@@ -13,7 +13,7 @@ use crate::errors::ParseError;
 // lexical stuff
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Tt {
-    Symbol,     // blah1
+    Sym,        // blah1
     Number,     // 0x1234
     String,     // "asdfasdf"
     LParen,     // (
@@ -23,8 +23,8 @@ pub enum Tt {
     LSquare,    // [
     RSquare,    // ]
     BigArrow,   // =>
-    EqEq,       // ==
-    Eq,         // =
+    Eq,         // ==
+    Assign,     // =
     Dot,        // .
     And,        // &
     Splat,      // *
@@ -43,6 +43,30 @@ pub struct Token<'a> {
     pub tt: Tt,
     pub ws: &'a str,
     pub tok: &'a str,
+}
+
+impl<'a> Token<'a> {
+    pub fn new(tt: Tt, tok: &'a str) -> Token<'a> {
+        Self{
+            file: Rc::new(PathBuf::new()),
+            line: 1,
+            col: 1,
+            tt: tt,
+            ws: "",
+            tok: tok,
+        }
+    }
+
+    pub fn new_ws(tt: Tt, ws: &'a str, tok: &'a str) -> Token<'a> {
+        Self{
+            file: Rc::new(PathBuf::new()),
+            line: 1,
+            col: 1,
+            tt: tt,
+            ws: ws,
+            tok: tok,
+        }
+    }
 }
 
 impl std::fmt::Debug for Token<'_> {
@@ -192,7 +216,7 @@ pub fn tokenize<'a>(
         tokens.push(match t.tail() {
             // symbols
             _ if t.matches(r"[a-zA-Z_][a-zA-Z_0-9]*") => {
-                t.munch(Tt::Symbol)
+                t.munch(Tt::Sym)
             },
             _ if t.matches(r"[0-9][xX]?[0-9a-fA-F]*") => {
                 t.munch(Tt::Number)
@@ -208,8 +232,8 @@ pub fn tokenize<'a>(
             _ if t.matches(r"\[") => t.munch(Tt::LSquare),
             _ if t.matches(r"\]") => t.munch(Tt::RSquare),
             _ if t.matches(r"=>") => t.munch(Tt::BigArrow),
-            _ if t.matches(r"==") => t.munch(Tt::EqEq),
-            _ if t.matches(r"=")  => t.munch(Tt::Eq),
+            _ if t.matches(r"==") => t.munch(Tt::Eq),
+            _ if t.matches(r"=")  => t.munch(Tt::Assign),
             _ if t.matches(r"\.") => t.munch(Tt::Dot),
             _ if t.matches(r"&")  => t.munch(Tt::And),
             _ if t.matches(r"\*") => t.munch(Tt::Splat),
