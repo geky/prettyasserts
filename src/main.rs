@@ -59,11 +59,11 @@ fn squiggle<'a>(exprs: &[Expr<'a>]) -> Expr<'a> {
 
 // modify the tree
 fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
-    if let Expr::Binary(lh, Token{tt: Tt::BigArrow,..}, rh) = &expr {
+    if let Expr::Binary(lh, arrow@Token{tt: Tt::BigArrow,..}, rh) = &expr {
         if let Expr::Call(sym_, l, list, r) = lh.deref() {
             if let Expr::Sym(sym_@Token{tok: Cow::Borrowed("lfsr_rbyd_get"), ..}) = sym_.deref() {
                 let rh = match rh.deref() {
-                    rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR") => Right(rh),
+                    rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
                     rh => Left(rh),
                 };
 
@@ -77,11 +77,14 @@ fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
                             list[1].clone(),
                             list[2].clone(),
                             list[3].clone(),
-                            (Some(sym("&data").indent(sym_.col-1 + 8)), None)
+                            (Some(sym("&data").ws(" ")), None)
                         ],
                         r.clone(),
                     )),
-                    tok("=>").ws(" "),
+                    match rh {
+                        Left(_) => tok("=>").ws(" "),
+                        Right(_) => arrow.clone(),
+                    },
                     Box::new(match rh {
                         Left(_) => sym("0").ws(" "),
                         Right(rh) => rh.clone(),
@@ -200,11 +203,11 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     // flatten and write to file
-                    tree.try_visit_tokens(|tok| {
+                    tree.try_map_tokens(|tok| {
                         // make sure to keep whitespace!
                         write!(f_, "{}", tok.ws)?;
                         write!(f_, "{}", tok.tok)?;
-                        Ok::<(), anyhow::Error>(())
+                        Ok::<_, anyhow::Error>(tok)
                     })?;
 
                     in_c = false;
@@ -271,11 +274,11 @@ fn main() -> Result<(), anyhow::Error> {
         if let Some(output) = opt.output {
             let f = File::create(output)?;
             let mut f = BufWriter::new(f);
-            tree.try_visit_tokens(|tok| {
+            tree.try_map_tokens(|tok| {
                 // make sure to keep whitespace!
                 write!(f, "{}", tok.ws)?;
                 write!(f, "{}", tok.tok)?;
-                Ok::<(), anyhow::Error>(())
+                Ok::<_, anyhow::Error>(tok)
             })?;
         }
     }

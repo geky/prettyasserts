@@ -377,26 +377,6 @@ impl<'a> Expr<'a> {
 
 // token traversal
 impl<'a> Tree<'a> {
-    pub fn visit_tokens<F>(&self, mut cb: F)
-    where
-        F: FnMut(&Token<'a>)
-    {
-        self.try_visit_tokens(|tok| Ok::<_,()>(cb(tok))).unwrap()
-    }
-
-    // hacky, expensive! but easier than rewritting all of these pesky
-    // match statements
-    pub fn try_visit_tokens<F, E>(&self, mut cb: F) -> Result<(), E>
-    where
-        F: FnMut(&Token<'a>) -> Result<(), E>
-    {
-        self.clone()._try_map_tokens(&mut |tok| {
-            cb(&tok)?;
-            Ok(tok)
-        })?;
-        Ok(())
-    }
-
     pub fn map_tokens<F>(self, mut cb: F) -> Self
     where
         F: FnMut(Token<'a>) -> Token<'a>
@@ -442,26 +422,6 @@ fn list_try_map_tokens<'a, E>(
 }
 
 impl<'a> Expr<'a> {
-    pub fn visit_tokens<F>(&self, mut cb: F)
-    where
-        F: FnMut(&Token<'a>)
-    {
-        self.try_visit_tokens(|tok| Ok::<_,()>(cb(tok))).unwrap()
-    }
-
-    // hacky, expensive! but easier than rewritting all of these pesky
-    // match statements
-    pub fn try_visit_tokens<F, E>(&self, mut cb: F) -> Result<(), E>
-    where
-        F: FnMut(&Token<'a>) -> Result<(), E>
-    {
-        self.clone()._try_map_tokens(&mut |tok| {
-            cb(&tok)?;
-            Ok(tok)
-        })?;
-        Ok(())
-    }
-
     pub fn map_tokens<F>(self, mut cb: F) -> Self
     where
         F: FnMut(Token<'a>) -> Token<'a>
@@ -538,26 +498,6 @@ impl<'a> Expr<'a> {
 
 // expr traversal
 impl<'a> Tree<'a> {
-    pub fn visit_exprs<F>(&self, mut cb: F)
-    where
-        F: FnMut(&Expr<'a>)
-    {
-        self.try_visit_exprs(|expr| Ok::<_,()>(cb(expr))).unwrap()
-    }
-
-    // hacky, expensive! but easier than rewritting all of these pesky
-    // match statements
-    pub fn try_visit_exprs<F, E>(&self, mut cb: F) -> Result<(), E>
-    where
-        F: FnMut(&Expr<'a>) -> Result<(), E>
-    {
-        self.clone()._try_map_exprs(&mut |expr| {
-            cb(&expr)?;
-            Ok(expr)
-        })?;
-        Ok(())
-    }
-
     pub fn map_exprs<F>(self, mut cb: F) -> Self
     where
         F: FnMut(Expr<'a>) -> Expr<'a>
@@ -601,26 +541,6 @@ fn list_try_map_exprs<'a, E>(
 
 
 impl<'a> Expr<'a> {
-    pub fn visit_exprs<F>(&self, mut cb: F)
-    where
-        F: FnMut(&Expr<'a>)
-    {
-        self.try_visit_exprs(|expr| Ok::<_,()>(cb(expr))).unwrap()
-    }
-
-    // hacky, expensive! but easier than rewritting all of these pesky
-    // match statements
-    pub fn try_visit_exprs<F, E>(&self, mut cb: F) -> Result<(), E>
-    where
-        F: FnMut(&Expr<'a>) -> Result<(), E>
-    {
-        self.clone()._try_map_exprs(&mut |expr| {
-            cb(&expr)?;
-            Ok(expr)
-        })?;
-        Ok(())
-    }
-
     pub fn map_exprs<F>(self, mut cb: F) -> Self
     where
         F: FnMut(Expr<'a>) -> Expr<'a>
