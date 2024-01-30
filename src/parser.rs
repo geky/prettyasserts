@@ -28,7 +28,7 @@ pub enum Expr<'b, 'a> {
 
 type List<'b, 'a> = [(Option<Expr<'b, 'a>>, Option<Token<'a>>)];
 
-type Root<'b, 'a> = (Box<List<'b, 'a>>, Option<Token<'a>>);
+type Root<'b, 'a> = (&'b List<'b, 'a>, Option<Token<'a>>);
 
 #[derive(Debug)]
 pub struct Tree<'a>(Pooled<Root<'a, 'a>>);
@@ -322,7 +322,7 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
         let mut p = Parser::new(tokens, o);
 
         // start parsing
-        let root = parse_list(&mut p)?;
+        let root = parse_list(&mut p)?.swim(&mut p.o).as_ref();
 
         // just kind of shove any trailing whitespace into our tree
         let trailing_ws = if let Some(Tt::TrailingWs) = p.tt() {
@@ -374,13 +374,13 @@ impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for Root<'_, 'a> {
 
     fn _try_pmap<E>(
         &self,
-        p: &mut Pool<'b>,
+        o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
     ) -> Result<Self::Pmapped, E> {
         Ok((
-            self.0.as_ref()._try_pmap(p, cb)?,
-            self.1.map(|tok| cb(p, tok)).transpose()?
+            self.0._try_pmap(o, cb)?.swim(o),
+            self.1.map(|tok| cb(o, tok)).transpose()?
         ))
     }
 }
@@ -390,15 +390,15 @@ impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for List<'_, 'a> {
 
     fn _try_pmap<E>(
         &self,
-        p: &mut Pool<'b>,
+        o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
     ) -> Result<Self::Pmapped, E> {
         let mut list_ = vec![];
         for (expr, comma) in self.iter() {
             list_.push((
-                expr.as_ref().map(|expr| expr._try_pmap(p, cb)).transpose()?,
-                comma.map(|tok| cb(p, tok)).transpose()?
+                expr.as_ref().map(|expr| expr._try_pmap(o, cb)).transpose()?,
+                comma.map(|tok| cb(o, tok)).transpose()?
             ));
         }
         Ok(list_.into_boxed_slice())
@@ -410,59 +410,59 @@ impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for Expr<'_, 'a> {
 
     fn _try_pmap<E>(
         &self,
-        p: &mut Pool<'b>,
+        o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
     ) -> Result<Self::Pmapped, E> {
         Ok(match self {
-            Expr::Sym(tok) => Expr::Sym(cb(p, *tok)?),
-            Expr::Lit(tok) => Expr::Lit(cb(p, *tok)?),
+            Expr::Sym(tok) => Expr::Sym(cb(o, *tok)?),
+            Expr::Lit(tok) => Expr::Lit(cb(o, *tok)?),
             Expr::Decl(expr, tok) => Expr::Decl(
-                expr._try_pmap(p, cb)?.swim(p),
-                cb(p, tok.clone())?,
+                expr._try_pmap(o, cb)?.swim(o),
+                cb(o, tok.clone())?,
             ),
             Expr::Call(expr, l, list, r) => Expr::Call(
-                expr._try_pmap(p, cb)?.swim(p),
-                cb(p, l.clone())?,
-                list._try_pmap(p, cb)?.swim(p),
-                cb(p, r.clone())?,
+                expr._try_pmap(o, cb)?.swim(o),
+                cb(o, l.clone())?,
+                list._try_pmap(o, cb)?.swim(o),
+                cb(o, r.clone())?,
             ),
             Expr::Index(expr, l, list, r) => Expr::Index(
-                expr._try_pmap(p, cb)?.swim(p),
-                cb(p, l.clone())?,
-                list._try_pmap(p, cb)?.swim(p),
-                cb(p, r.clone())?,
+                expr._try_pmap(o, cb)?.swim(o),
+                cb(o, l.clone())?,
+                list._try_pmap(o, cb)?.swim(o),
+                cb(o, r.clone())?,
             ),
             Expr::Block(expr, l, list, r) => Expr::Block(
-                expr._try_pmap(p, cb)?.swim(p),
-                cb(p, l.clone())?,
-                list._try_pmap(p, cb)?.swim(p),
-                cb(p, r.clone())?,
+                expr._try_pmap(o, cb)?.swim(o),
+                cb(o, l.clone())?,
+                list._try_pmap(o, cb)?.swim(o),
+                cb(o, r.clone())?,
             ),
             Expr::Unary(tok, expr) => Expr::Unary(
-                cb(p, tok.clone())?,
-                expr._try_pmap(p, cb)?.swim(p),
+                cb(o, tok.clone())?,
+                expr._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Suffnary(expr, tok) => Expr::Suffnary(
-                expr._try_pmap(p, cb)?.swim(p),
-                cb(p, tok.clone())?,
+                expr._try_pmap(o, cb)?.swim(o),
+                cb(o, tok.clone())?,
             ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
-                lh._try_pmap(p, cb)?.swim(p),
-                cb(p, tok.clone())?,
-                rh._try_pmap(p, cb)?.swim(p),
+                lh._try_pmap(o, cb)?.swim(o),
+                cb(o, tok.clone())?,
+                rh._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
-                lh._try_pmap(p, cb)?.swim(p),
-                cb(p, l.clone())?,
-                mh._try_pmap(p, cb)?.swim(p),
-                cb(p, r.clone())?,
-                rh._try_pmap(p, cb)?.swim(p),
+                lh._try_pmap(o, cb)?.swim(o),
+                cb(o, l.clone())?,
+                mh._try_pmap(o, cb)?.swim(o),
+                cb(o, r.clone())?,
+                rh._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(
-                cb(p, l.clone())?,
-                list._try_pmap(p, cb)?.swim(p),
-                cb(p, r.clone())?,
+                cb(o, l.clone())?,
+                list._try_pmap(o, cb)?.swim(o),
+                cb(o, r.clone())?,
             ),
         })
     }
@@ -498,12 +498,12 @@ impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for Root<'_, 'a> {
 
     fn _try_pmap<E>(
         &self,
-        p: &mut Pool<'b>,
+        o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
     ) -> Result<Self::Pmapped, E> {
         Ok((
-            self.0.as_ref()._try_pmap(p, cb)?,
+            self.0._try_pmap(o, cb)?.swim(o),
             self.1.clone()
         ))
     }
@@ -514,14 +514,14 @@ impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for List<'_, 'a> {
 
     fn _try_pmap<E>(
         &self,
-        p: &mut Pool<'b>,
+        o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
     ) -> Result<Self::Pmapped, E> {
         let mut list_ = vec![];
         for (expr, comma) in self.iter() {
             list_.push((
-                expr.as_ref().map(|expr| expr._try_pmap(p, cb)).transpose()?,
+                expr.as_ref().map(|expr| expr._try_pmap(o, cb)).transpose()?,
                 comma.clone()
             ));
         }
@@ -534,7 +534,7 @@ impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
 
     fn _try_pmap<E>(
         &self,
-        p: &mut Pool<'b>,
+        o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
     ) -> Result<Self::Pmapped, E> {
@@ -543,55 +543,55 @@ impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
             Expr::Sym(tok) => Expr::Sym(tok.clone()),
             Expr::Lit(tok) => Expr::Lit(tok.clone()),
             Expr::Decl(expr, tok) => Expr::Decl(
-                expr._try_pmap(p, cb)?.swim(p),
+                expr._try_pmap(o, cb)?.swim(o),
                 tok.clone(),
             ),
             Expr::Call(expr, l, list, r) => Expr::Call(
-                expr._try_pmap(p, cb)?.swim(p),
+                expr._try_pmap(o, cb)?.swim(o),
                 l.clone(),
-                list._try_pmap(p, cb)?.swim(p),
+                list._try_pmap(o, cb)?.swim(o),
                 r.clone(),
             ),
             Expr::Index(expr, l, list, r) => Expr::Index(
-                expr._try_pmap(p, cb)?.swim(p),
+                expr._try_pmap(o, cb)?.swim(o),
                 l.clone(),
-                list._try_pmap(p, cb)?.swim(p),
+                list._try_pmap(o, cb)?.swim(o),
                 r.clone(),
             ),
             Expr::Block(expr, l, list, r) => Expr::Block(
-                expr._try_pmap(p, cb)?.swim(p),
+                expr._try_pmap(o, cb)?.swim(o),
                 l.clone(),
-                list._try_pmap(p, cb)?.swim(p),
+                list._try_pmap(o, cb)?.swim(o),
                 r.clone(),
             ),
             Expr::Unary(tok, expr) => Expr::Unary(
                 tok.clone(),
-                expr._try_pmap(p, cb)?.swim(p),
+                expr._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Suffnary(expr, tok) => Expr::Suffnary(
-                expr._try_pmap(p, cb)?.swim(p),
+                expr._try_pmap(o, cb)?.swim(o),
                 tok.clone(),
             ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
-                lh._try_pmap(p, cb)?.swim(p),
+                lh._try_pmap(o, cb)?.swim(o),
                 tok.clone(),
-                rh._try_pmap(p, cb)?.swim(p),
+                rh._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
-                lh._try_pmap(p, cb)?.swim(p),
+                lh._try_pmap(o, cb)?.swim(o),
                 l.clone(),
-                mh._try_pmap(p, cb)?.swim(p),
+                mh._try_pmap(o, cb)?.swim(o),
                 r.clone(),
-                rh._try_pmap(p, cb)?.swim(p),
+                rh._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(
                 l.clone(),
-                list._try_pmap(p, cb)?.swim(p),
+                list._try_pmap(o, cb)?.swim(o),
                 r.clone(),
             ),
         };
 
-        cb(p, expr)
+        cb(o, expr)
     }
 }
 
