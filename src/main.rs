@@ -41,7 +41,7 @@ fn sym<'a>(s: &'a str) -> Expr<'static, 'a> {
     Expr::Sym(tok(s))
 }
 
-fn squiggle<'b, 'a>(o: &mut Pool<'b>, exprs: &[Expr<'b, 'a>]) -> Expr<'b, 'a> {
+fn span<'b, 'a>(o: &mut Pool<'b>, exprs: &[Expr<'b, 'a>]) -> Expr<'b, 'a> {
     let mut list = vec![];
     for (i, expr) in exprs.iter().enumerate() {
         list.push((
@@ -69,8 +69,8 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
             Expr::Call(Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}), lp, args, rp),
             arrow@Token{tt: Tt::BigArrow, ..},
             rh
-        )
-    = expr {
+        ) = expr
+    {
         let rh = match rh {
             rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
             rh => Left(rh),
@@ -118,7 +118,7 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
             ));
         }
 
-        return Ok(squiggle(o, &list_));
+        return Ok(span(o, &list_));
     }
 
     Ok(expr)
