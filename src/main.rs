@@ -1,4 +1,6 @@
 #![allow(dead_code)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
 
 use structopt::StructOpt;
 use anyhow;
@@ -23,6 +25,8 @@ use tokenizer::tokenize;
 use tokenizer::tokenize_at;
 use tokenizer::Token;
 use tokenizer::Tt;
+mod pool;
+use pool::Pool;
 mod parser;
 use parser::parse;
 use parser::Expr;
@@ -58,7 +62,7 @@ use parser::Expr;
 
 
 // modify the tree
-//fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
+fn modify<'a>(o: &mut Pool<'a>, expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
 //    if let Expr::Binary(lh, arrow@Token{tt: Tt::BigArrow,..}, rh) = &expr {
 //        if let Expr::Call(sym_, l, list, r) = lh.deref() {
 //            if let Expr::Sym(sym_@Token{tok: Cow::Borrowed("lfsr_rbyd_get"), ..}) = sym_.deref() {
@@ -115,7 +119,8 @@ use parser::Expr;
 //    }
 //
 //    Ok(expr)
-//}
+    todo!()
+}
 
 
 
@@ -181,7 +186,7 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     // parse
-                    let tree = match parse(&tokens) {
+                    let mut tree = match parse(&tokens) {
                         Ok(tree) => tree,
                         Err(err) => {
                             err.print_context();
@@ -195,23 +200,22 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     // modify!
-// TODO
-//                    let tree = tree.try_map_exprs(modify)?;
-//
-//                    if opt.dump_modified {
-//                        println!("{:#?}", tree);
-//                        std::process::exit(0);
-//                    }
-//
-//                    // flatten and write to file
-//                    tree.try_map_tokens(|tok| {
-//                        // make sure to keep whitespace!
-//                        write!(f_, "{}", tok.ws)?;
-//                        write!(f_, "{}", tok.tok)?;
-//                        Ok::<_, anyhow::Error>(tok)
-//                    })?;
-                    drop(tree);
+                    tree = tree.try_map_exprs(modify)?;
 
+                    if opt.dump_modified {
+                        println!("{:#?}", tree);
+                        std::process::exit(0);
+                    }
+
+                    // flatten and write to file
+                    tree.try_map_tokens(|_, tok| {
+                        // make sure to keep whitespace!
+                        write!(f_, "{}", tok.ws)?;
+                        write!(f_, "{}", tok.tok)?;
+                        Ok::<_, anyhow::Error>(tok)
+                    })?;
+
+                    drop(tree);
                     in_c = false;
                     chunk.clear();
                     writeln!(f_, "{}", line_)?;
@@ -264,26 +268,25 @@ fn main() -> Result<(), anyhow::Error> {
             std::process::exit(0);
         }
 
-// TODO
-//        // modify!
-//        let tree = tree.try_map_exprs(modify)?;
-//
-//        if opt.dump_modified {
-//            println!("{:#?}", tree);
-//            std::process::exit(0);
-//        }
-//
-//        // flatten and write to file
-//        if let Some(output) = opt.output {
-//            let f = File::create(output)?;
-//            let mut f = BufWriter::new(f);
-//            tree.try_map_tokens(|tok| {
-//                // make sure to keep whitespace!
-//                write!(f, "{}", tok.ws)?;
-//                write!(f, "{}", tok.tok)?;
-//                Ok::<_, anyhow::Error>(tok)
-//            })?;
-//        }
+        // modify!
+        let tree = tree.try_map_exprs(modify)?;
+
+        if opt.dump_modified {
+            println!("{:#?}", tree);
+            std::process::exit(0);
+        }
+
+        // flatten and write to file
+        if let Some(output) = opt.output {
+            let f = File::create(output)?;
+            let mut f = BufWriter::new(f);
+            tree.try_map_tokens(|_, tok| {
+                // make sure to keep whitespace!
+                write!(f, "{}", tok.ws)?;
+                write!(f, "{}", tok.tok)?;
+                Ok::<_, anyhow::Error>(tok)
+            })?;
+        }
     }
 
     Ok(())
