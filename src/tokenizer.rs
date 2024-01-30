@@ -56,7 +56,7 @@ pub struct Token<'a> {
     pub line: usize,
     pub col: usize,
     pub tt: Tt,
-    pub ws: &'a str,
+    pub lws: &'a str,
     pub tok: &'a str,
 }
 
@@ -76,20 +76,20 @@ impl<'a> Token<'a> {
             line: 1,
             col: 1,
             tt: tt,
-            ws: "",
+            lws: "",
             tok: tok,
         }
     }
 
-    pub fn ws(self, ws: &'a str) -> Self {
+    pub fn lws(self, ws: &'a str) -> Self {
         Self{
-            ws: ws.into(),
+            lws: ws.into(),
             ..self
         }
     }
 
     pub fn indent(self, n: usize) -> Self {
-        self.ws(&INDENT[..n+1])
+        self.lws(&INDENT[..n+1])
     }
 }
 
@@ -196,7 +196,7 @@ impl<'a> Tokenizer<'a> {
             line: self.line,
             col: self.col,
             tt: tt,
-            ws: &self.input[self.ws_i..self.i],
+            lws: &self.input[self.ws_i..self.i],
             tok: self.found,
         };
         self._next(tok.tok.len());

@@ -53,23 +53,23 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
         let mut list_ = vec![];
         list_.push(Expr::Binary(
             Expr::Call(
-                sym("lfsr_rbyd_lookup").ws(o, sym_.ws).swim(o),
+                sym("lfsr_rbyd_lookup").lws(o, sym_.lws).swim(o),
                 *lp,
                 vec![
                     args[0].clone(),
                     args[1].clone(),
                     args[2].clone(),
                     args[3].clone(),
-                    (Some(sym("&data").ws(o, " ")), None)
+                    (Some(sym("&data").lws(o, " ")), None)
                 ].swim(o),
                 *rp,
             ).swim(o),
             match rh {
-                Left(_) => tok("=>").ws(" "),
+                Left(_) => tok("=>").lws(" "),
                 Right(_) => arrow.indent(sym_.col-1+8),
             },
             match rh {
-                Left(_) => sym("0").ws(o, " ").swim(o),
+                Left(_) => sym("0").lws(o, " ").swim(o),
                 Right(rh) => rh,
             },
         ));
@@ -81,13 +81,13 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
                     *lp,
                     vec![
                         (Some(sym("&lfs")), Some(tok(","))),
-                        (Some(sym("&data").ws(o, " ")), Some(tok(","))),
+                        (Some(sym("&data").lws(o, " ")), Some(tok(","))),
                         args[4].clone(),
                         args[5].clone(),
                     ].swim(o),
                     *rp
                 ).swim(o),
-                tok("=>").ws(" "),
+                tok("=>").lws(" "),
                 rh.swim(o),
             ));
         }
@@ -186,7 +186,7 @@ fn main() -> Result<(), anyhow::Error> {
                     // flatten and write to file
                     tree.try_visit_tokens(|tok| {
                         // make sure to keep whitespace!
-                        write!(f_, "{}", tok.ws)?;
+                        write!(f_, "{}", tok.lws)?;
                         write!(f_, "{}", tok.tok)?;
                         Ok::<_, anyhow::Error>(())
                     })?;
@@ -258,7 +258,7 @@ fn main() -> Result<(), anyhow::Error> {
             let mut f = BufWriter::new(f);
             tree.try_visit_tokens(|tok| {
                 // make sure to keep whitespace!
-                write!(f, "{}", tok.ws)?;
+                write!(f, "{}", tok.lws)?;
                 write!(f, "{}", tok.tok)?;
                 Ok::<_, anyhow::Error>(())
             })?;

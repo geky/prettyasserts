@@ -325,7 +325,7 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
         let root = parse_list(&mut p)?.swim(&mut p.o).as_ref();
 
         // just kind of shove any trailing whitespace into our tree
-        let trailing_ws = if let Some(Tt::TrailingWs) = p.tt() {
+        let tws = if let Some(Tt::TrailingWs) = p.tt() {
             Some(p.munch())
         } else {
             None
@@ -336,7 +336,7 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
             return Err(p.unexpected());
         }
 
-        Ok((root, trailing_ws))
+        Ok((root, tws))
     })?;
 
     Ok(Tree(root))
@@ -666,12 +666,11 @@ impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
 
 // whitespace stuff
 impl<'a> Tree<'a> {
-    pub fn ws(self, ws: &'a str) -> Self {
+    pub fn lws(self, ws: &'a str) -> Self {
         let mut first = true;
-        let ws = ws.into();
         self.fork_tokens(|_, tok| {
             if first {
-                let tok = tok.ws(ws);
+                let tok = tok.lws(ws);
                 first = false;
                 tok
             } else {
@@ -695,11 +694,11 @@ impl<'a> Tree<'a> {
 }
 
 impl<'b, 'a> Expr<'b, 'a> {
-    pub fn ws(self, o: &mut Pool<'b>, ws: &'a str) -> Self {
+    pub fn lws(self, o: &mut Pool<'b>, ws: &'a str) -> Self {
         let mut first = true;
         self.pfork(o, |_, tok: Token<'a>| {
             if first {
-                let tok = tok.ws(ws);
+                let tok = tok.lws(ws);
                 first = false;
                 tok
             } else {
