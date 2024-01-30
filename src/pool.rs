@@ -1,21 +1,26 @@
+
 use std::ops::Deref;
 use std::ops::DerefMut;
+use std::mem::transmute;
+use std::cell::RefCell;
+use std::borrow::BorrowMut;
 
 
 // we can't use Rust's Any because it's 'static
 pub trait Swimmer {}
 impl<T> Swimmer for T {}
 
-pub struct Pool<'a>(Vec<Box<dyn Swimmer + 'a>>);
+pub struct Pool<'a>(RefCell<Vec<Box<dyn Swimmer + 'a>>>);
 
 impl<'a> Pool<'a> {
     fn new() -> Self {
-        Pool(vec![])
+        Pool(RefCell::new(vec![]))
     }
 
-    fn pool<T: Swimmer>(&mut self, t: T) -> &'a T {
-        self.0.push(Box::new(t));
-        let ref_ = self.0.last().unwrap().as_ref();
+    fn pool<T: Swimmer>(&self, t: T) -> &'a T {
+        let mut o = self.0.borrow_mut();
+        o.push(Box::new(t));
+        let ref_ = o.last().unwrap().as_ref();
         unsafe { &*(ref_ as *const dyn Swimmer as *const T) }
     }
 }
@@ -31,40 +36,40 @@ impl<T: Swimmer> Swim for T {
 }
 
 // here's the actual type that's relatively safe to use
-pub struct Pooled<'a, T>(T, Pool<'a>);
+pub struct Pooled<T>(T, Pool<'static>);
 
-impl<'a, T> Pooled<'a, T> {
+impl<T> Pooled<T> {
     pub fn new(t: T) -> Self {
         Pooled(t, Pool::new())
     }
 
-    pub fn from_fn<F>(cb: F) -> Self
+    pub fn from_fn<'a, F>(cb: F) -> Self
     where
         F: FnOnce(&mut Pool<'a>) -> T
     {
-        let mut o = Pool::new();
-        let t = cb(&mut o);
-        Pooled(t, o)
+        Self::try_from_fn(|o| Ok::<_, ()>(cb(o))).unwrap()
     }
 
-    pub fn try_from_fn<F, E>(cb: F) -> Result<Self, E>
+    pub fn try_from_fn<'a, F, E>(cb: F) -> Result<Self, E>
     where
         F: FnOnce(&mut Pool<'a>) -> Result<T, E>
     {
         let mut o = Pool::new();
-        let t = cb(&mut o)?;
+        let t = cb(
+            unsafe { transmute::<&mut Pool<'static>, &mut Pool<'a>>(&mut o) }
+        )?;
         Ok(Pooled(t, o))
     }
 }
 
 // extra stuff
-impl<T: Default> Default for Pooled<'_, T> {
+impl<T: Default> Default for Pooled<T> {
     fn default() -> Self {
         Self::new(T::default())
     }
 }
 
-impl<T: std::fmt::Debug> std::fmt::Debug for Pooled<'_, T> {
+impl<T: std::fmt::Debug> std::fmt::Debug for Pooled<T> {
     fn fmt(
         &self,
         f: &mut std::fmt::Formatter<'_>
@@ -76,19 +81,19 @@ impl<T: std::fmt::Debug> std::fmt::Debug for Pooled<'_, T> {
     }
 }
 
-impl<T> AsRef<T> for Pooled<'_, T> {
+impl<T> AsRef<T> for Pooled<T> {
     fn as_ref(&self) -> &T {
         &self.0
     }
 }
 
-impl<T> AsMut<T> for Pooled<'_, T> {
+impl<T> AsMut<T> for Pooled<T> {
     fn as_mut(&mut self) -> &mut T {
         &mut self.0
     }
 }
 
-impl<T> Deref for Pooled<'_, T> {
+impl<T> Deref for Pooled<T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
@@ -96,65 +101,80 @@ impl<T> Deref for Pooled<'_, T> {
     }
 }
 
-impl<T> DerefMut for Pooled<'_, T> {
+impl<T> DerefMut for Pooled<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
 // extra trait needed for tree transformations
-pub trait Map<'a, I> {
-    type Mapped;
+pub trait Pmap<'a, M> {
+    type Pmapped;
 
-    // recursion makes the compiler explode if f is generic!
-    fn _try_map<E>(
+    fn _pmap(
         &self,
         o: &mut Pool<'a>,
-        cb: &mut dyn FnMut(&mut Pool<'a>, I) -> Result<I, E>
-    ) -> Result<Self::Mapped, E>;
-
-    // convenience wrappers
-    fn map<F>(
-        &self,
-        o: &mut Pool<'a>,
-        mut cb: F
-    ) -> Self::Mapped
-    where
-        F: FnMut(&mut Pool<'a>, I) -> I
-    {
-        self._try_map(o, &mut |o, t| Ok::<_, ()>(cb(o, t))).unwrap()
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(&mut Pool<'a>, M) -> M
+    ) -> Self::Pmapped {
+        self._try_pmap(o, &mut |o, t| Ok::<_, ()>(cb(o, t))).unwrap()
     }
 
-    fn try_map<F, E>(
+    fn _try_pmap<E>(
         &self,
         o: &mut Pool<'a>,
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(&mut Pool<'a>, M) -> Result<M, E>
+    ) -> Result<Self::Pmapped, E>;
+
+    // convenience wrappers, but if recursion is used use the above or
+    // else Rust will barf when the compiler itself overflows
+    fn pmap<F>(
+        &self,
+        o: &mut Pool<'a>,
+        // recursion makes the compiler explode if f is generic!
         mut cb: F
-    ) -> Result<Self::Mapped, E>
+    ) -> Self::Pmapped
     where
-        F: FnMut(&mut Pool<'a>, I) -> Result<I, E>
+        F: FnMut(&mut Pool<'a>, M) -> M
     {
-        self._try_map(o, &mut cb)
+        self._pmap(o, &mut cb)
+    }
+
+    fn try_pmap<F, E>(
+        &self,
+        o: &mut Pool<'a>,
+        // recursion makes the compiler explode if f is generic!
+        mut cb: F
+    ) -> Result<Self::Pmapped, E>
+    where
+        F: FnMut(&mut Pool<'a>, M) -> Result<M, E>
+    {
+        self._try_pmap(o, &mut cb)
     }
 }
 
-impl<'a, T> Pooled<'a, T> {
-    pub fn map<I, F>(&self, mut cb: F) -> Pooled<'a, T::Mapped>
+impl<T> Pooled<T> {
+    pub fn pmap<'a, M, F,>(&self, mut cb: F) -> Pooled<T::Pmapped>
     where
-        T: Map<'a, I>,
-        F: FnMut(&mut Pool<'a>, I) -> I
+        T: Pmap<'a, M>,
+        F: FnMut(&mut Pool<'a>, M) -> M
     {
-        self.try_map(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
+        self.try_pmap(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
     }
 
-    pub fn try_map<I, F, E>(&self, cb: F) -> Result<Pooled<'a, T::Mapped>, E>
+    pub fn try_pmap<'a, M, F, E>(&self, mut cb: F) -> Result<Pooled<T::Pmapped>, E>
     where
-        T: Map<'a, I>,
-        F: FnMut(&mut Pool<'a>, I) -> Result<I, E>
+        T: Pmap<'a, M>,
+        F: FnMut(&mut Pool<'a>, M) -> Result<M, E>
     {
         // create a new swim
         let mut o = Pool::new();
         // map t
-        let t = self.0.try_map(&mut o, cb)?;
+        let t = self.0._try_pmap(
+            unsafe { transmute::<&mut Pool<'static>, &mut Pool<'a>>(&mut o) },
+            &mut cb
+        )?;
         Ok(Pooled(t, o))
     }
 }

@@ -37,11 +37,11 @@ fn tok<'a>(s: &'a str) -> Token<'a> {
     Token::new(Tt::Sym, s)
 }
 
-fn sym<'a>(s: &'a str) -> Expr<'a> {
+fn sym<'a>(s: &'a str) -> Expr<'static, 'a> {
     Expr::Sym(tok(s))
 }
 
-fn squiggle<'a>(o: &mut Pool<'a>, exprs: &[Expr<'a>]) -> Expr<'a> {
+fn squiggle<'b, 'a>(o: &mut Pool<'b>, exprs: &[Expr<'b, 'a>]) -> Expr<'b, 'a> {
     let mut list = vec![];
     for (i, expr) in exprs.iter().enumerate() {
         list.push((
@@ -63,7 +63,7 @@ fn squiggle<'a>(o: &mut Pool<'a>, exprs: &[Expr<'a>]) -> Expr<'a> {
 
 
 // modify the tree
-fn modify<'a>(o: &mut Pool<'a>, expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
+fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, anyhow::Error> {
     if let
         Expr::Binary(
             Expr::Call(Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}), lp, args, rp),
