@@ -69,14 +69,14 @@ impl<'b, 'a> Parser<'b, 'a> {
     }
 
     fn munch(&mut self) -> Token<'a> {
-        let tok = self.tokens[self.i].clone();
+        let tok = self.tokens[self.i];
         self._next(1);
         tok
     }
 
     fn error(&self, message: String) -> ParseError {
         let tok = &self.tokens[self.i];
-        ParseError::new(&tok.file, tok.line, tok.col, message)
+        ParseError::new(tok.file.to_path_buf(), tok.line, tok.col, message)
     }
 
     fn unexpected(&self) -> ParseError {
@@ -308,7 +308,7 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
             };
 
             if expr.is_some() || comma.is_some() {
-                list.push((expr, comma.clone()));
+                list.push((expr, comma));
             }
             if comma.is_none() {
                 break list.into_boxed_slice();
@@ -372,7 +372,7 @@ impl<'a> Map<'a, Token<'a>> for Root<'a> {
     ) -> Result<Self::Mapped, E> {
         Ok((
             self.0.as_ref()._try_map(p, cb)?,
-            self.1.as_ref().map(|tok| cb(p, tok.clone())).transpose()?
+            self.1.map(|tok| cb(p, tok)).transpose()?
         ))
     }
 }
@@ -390,7 +390,7 @@ impl<'a> Map<'a, Token<'a>> for List<'a> {
         for (expr, comma) in self.iter() {
             list_.push((
                 expr.as_ref().map(|expr| expr._try_map(p, cb)).transpose()?,
-                comma.as_ref().map(|tok| cb(p, tok.clone())).transpose()?
+                comma.map(|tok| cb(p, tok)).transpose()?
             ));
         }
         Ok(list_.into_boxed_slice())
@@ -407,8 +407,8 @@ impl<'a> Map<'a, Token<'a>> for Expr<'a> {
         cb: &mut dyn FnMut(&mut Pool<'a>, Token<'a>) -> Result<Token<'a>, E>
     ) -> Result<Self::Mapped, E> {
         Ok(match self {
-            Expr::Sym(tok) => Expr::Sym(cb(p, tok.clone())?),
-            Expr::Lit(tok) => Expr::Lit(cb(p, tok.clone())?),
+            Expr::Sym(tok) => Expr::Sym(cb(p, *tok)?),
+            Expr::Lit(tok) => Expr::Lit(cb(p, *tok)?),
             Expr::Decl(expr, tok) => Expr::Decl(
                 expr._try_map(p, cb)?.swim(p),
                 cb(p, tok.clone())?,
@@ -585,12 +585,12 @@ impl<'a> Map<'a, Expr<'a>> for Expr<'a> {
 
 // whitespace stuff
 impl<'a> Tree<'a> {
-    pub fn ws<S: Into<Cow<'a, str>>>(self, ws: S) -> Self {
+    pub fn ws(self, ws: &'a str) -> Self {
         let mut first = true;
         let ws = ws.into();
         self.map_tokens(|_, tok| {
             if first {
-                let tok = tok.ws(ws.clone());
+                let tok = tok.ws(ws);
                 first = false;
                 tok
             } else {
@@ -600,17 +600,25 @@ impl<'a> Tree<'a> {
     }
 
     pub fn indent(self, n: usize) -> Self {
-        self.ws(format!("\n{:n$}", "", n=n))
+        let mut first = true;
+        self.map_tokens(|_, tok: Token<'a>| {
+            if first {
+                let tok = tok.indent(n);
+                first = false;
+                tok
+            } else {
+                tok
+            }
+        })
     }
 }
 
 impl<'a> Expr<'a> {
-    pub fn ws<S: Into<Cow<'a, str>>>(self, o: &mut Pool<'a>, ws: S) -> Self {
+    pub fn ws(self, o: &mut Pool<'a>, ws: &'a str) -> Self {
         let mut first = true;
-        let ws = ws.into();
         self.map(o, |_, tok: Token<'a>| {
             if first {
-                let tok = tok.ws(ws.clone());
+                let tok = tok.ws(ws);
                 first = false;
                 tok
             } else {
@@ -620,7 +628,16 @@ impl<'a> Expr<'a> {
     }
 
     pub fn indent(self, o: &mut Pool<'a>, n: usize) -> Self {
-        self.ws(o, format!("\n{:n$}", "", n=n))
+        let mut first = true;
+        self.map(o, |_, tok: Token<'a>| {
+            if first {
+                let tok = tok.indent(n);
+                first = false;
+                tok
+            } else {
+                tok
+            }
+        })
     }
 }
 

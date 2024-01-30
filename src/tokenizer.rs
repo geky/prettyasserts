@@ -2,7 +2,7 @@ use regex::Regex;
 
 use std::collections::HashMap;
 use std::cmp::min;
-use std::path::PathBuf;
+use std::path::Path;
 use std::rc::Rc;
 use std::borrow::Cow;
 
@@ -50,29 +50,38 @@ pub enum Tt {
     TrailingWs,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct Token<'a> {
-    pub file: Rc<PathBuf>,
+    pub file: &'a Path,
     pub line: usize,
     pub col: usize,
     pub tt: Tt,
-    pub ws: Cow<'a, str>,
-    pub tok: Cow<'a, str>,
+    pub ws: &'a str,
+    pub tok: &'a str,
 }
 
+// this is my big indent no-leak hack
+const INDENT: &'static str = concat!(
+    "\n",
+    //...:....1....:....2....:....3....:....4....:....
+    "                                                 ",
+    "                                                 "
+);
+
+
 impl<'a> Token<'a> {
-    pub fn new<S: Into<Cow<'a, str>>>(tt: Tt, tok: S) -> Self {
+    pub fn new(tt: Tt, tok: &'a str) -> Self {
         Self{
-            file: Rc::new(PathBuf::new()),
+            file: Path::new(""),
             line: 1,
             col: 1,
             tt: tt,
-            ws: Cow::from(""),
-            tok: tok.into(),
+            ws: "",
+            tok: tok,
         }
     }
 
-    pub fn ws<S: Into<Cow<'a, str>>>(self, ws: S) -> Self {
+    pub fn ws(self, ws: &'a str) -> Self {
         Self{
             ws: ws.into(),
             ..self
@@ -80,7 +89,7 @@ impl<'a> Token<'a> {
     }
 
     pub fn indent(self, n: usize) -> Self {
-        self.ws(format!("\n{:n$}", "", n=n))
+        self.ws(&INDENT[..n+1])
     }
 }
 
@@ -101,7 +110,7 @@ impl std::fmt::Debug for Token<'_> {
 
 // helper for pattern matching
 struct Tokenizer<'a> {
-    file: Rc<PathBuf>,
+    file: &'a Path,
     line: usize,
     col: usize,
 
@@ -118,13 +127,13 @@ struct Tokenizer<'a> {
 
 impl<'a> Tokenizer<'a> {
     fn new(
-        file: &Rc<PathBuf>,
+        file: &'a Path,
         line: usize,
         col: usize,
         input: &'a str
     ) -> Self {
         Self{
-            file: file.clone(),
+            file: file,
             line: line,
             col: col,
             input: input,
@@ -183,12 +192,12 @@ impl<'a> Tokenizer<'a> {
 
     fn munch(&mut self, tt: Tt) -> Token<'a> {
         let tok = Token {
-            file: self.file.clone(),
+            file: self.file,
             line: self.line,
             col: self.col,
             tt: tt,
-            ws: Cow::from(&self.input[self.ws_i..self.i]),
-            tok: Cow::from(self.found),
+            ws: &self.input[self.ws_i..self.i],
+            tok: self.found,
         };
         self._next(tok.tok.len());
         self.ws_i = self.i;
@@ -197,7 +206,7 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn error(&self, message: String) -> ParseError {
-        ParseError::new(&self.file, self.line, self.col, message)
+        ParseError::new(self.file.to_path_buf(), self.line, self.col, message)
     }
 
     fn unknown(&self) -> ParseError {
@@ -211,14 +220,14 @@ impl<'a> Tokenizer<'a> {
 
 // tokenizer
 pub fn tokenize<'a>(
-    file: &Rc<PathBuf>,
+    file: &'a Path,
     input: &'a str
 ) -> Result<Vec<Token<'a>>, ParseError> {
     tokenize_at(file, 1, 1, input)
 }
 
 pub fn tokenize_at<'a>(
-    file: &Rc<PathBuf>,
+    file: &'a Path,
     line: usize,
     col: usize,
     input: &'a str

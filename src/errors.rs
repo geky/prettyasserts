@@ -7,7 +7,7 @@ use std::rc::Rc;
 // error stuff
 #[derive(Debug)]
 pub struct ParseError {
-    file: Rc<PathBuf>,
+    file: PathBuf,
     line: usize,
     col: usize,
     message: String,
@@ -28,19 +28,19 @@ impl std::error::Error for ParseError {}
 
 impl ParseError {
     pub fn new(
-        file: &Rc<PathBuf>,
+        file: PathBuf,
         line: usize,
         col: usize,
         message: String,
     ) -> Self {
-        Self{file: file.clone(), line, col, message}
+        Self{file, line, col, message}
     }
 
     pub fn print_context(&self) {
         print!("{}", self);
 
         // try to also print context, but ignore errors
-        if let Ok(f) = File::open(self.file.as_ref()) {
+        if let Ok(f) = File::open(&self.file) {
             let f = BufReader::new(f);
             if let Some(Ok(line)) = f.lines().nth(self.line-1) {
                 println!(":\n{}", line);
