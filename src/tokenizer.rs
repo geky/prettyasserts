@@ -304,3 +304,13 @@ pub fn tokenize_at<'a>(
 
     Ok(tokens)
 }
+
+
+// extra utils, just to make tree creation easy
+pub fn tok<'a, S: Into<Cow<'a, str>>>(s: S) -> Token<'a> {
+    match s.into() {
+        Cow::Borrowed(s) => Token::new(Tt::Sym, s),
+        // is s is not 'a, best we can do is leak
+        Cow::Owned(s)    => Token::new(Tt::Sym, Box::leak(s.into_boxed_str())),
+    }
+}

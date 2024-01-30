@@ -25,41 +25,15 @@ use tokenizer::tokenize;
 use tokenizer::tokenize_at;
 use tokenizer::Token;
 use tokenizer::Tt;
+use tokenizer::tok;
 mod pool;
 use pool::Pool;
 use pool::Swim;
 mod parser;
 use parser::parse;
 use parser::Expr;
-
-
-fn tok<'a>(s: &'a str) -> Token<'a> {
-    Token::new(Tt::Sym, s)
-}
-
-fn sym<'a>(s: &'a str) -> Expr<'static, 'a> {
-    Expr::Sym(tok(s))
-}
-
-fn span<'b, 'a>(o: &mut Pool<'b>, exprs: &[Expr<'b, 'a>]) -> Expr<'b, 'a> {
-    let mut list = vec![];
-    for (i, expr) in exprs.iter().enumerate() {
-        list.push((
-            Some(expr.clone()),
-            if i < exprs.len()-1 {
-                Some(tok(";"))
-            } else {
-                None
-            }
-        ))
-    }
-
-    Expr::Squiggle(
-        tok(""),
-        list.swim(o),
-        tok(""),
-    )
-}
+use parser::sym;
+use parser::span;
 
 
 // modify the tree

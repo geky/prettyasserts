@@ -721,3 +721,41 @@ impl<'b, 'a> Expr<'b, 'a> {
         })
     }
 }
+
+
+// extra utils, just to make tree creation easy
+use crate::tokenizer::tok;
+use std::borrow::Borrow;
+
+pub fn sym<'a, S: Into<Cow<'a, str>>>(s: S) -> Expr<'static, 'a> {
+    Expr::Sym(tok(s))
+}
+
+// a span is sort of an invisible squiggle, usually for injecting multiple
+// exprs into a single expr
+pub fn span<'b, 'a, I>(o: &mut Pool<'b>, list: I) -> Expr<'b, 'a>
+where
+    I: IntoIterator,
+    I::Item: Borrow<Expr<'b, 'a>>,
+{
+    let list = list.into_iter().collect::<Vec<_>>();
+    let mut list_ = vec![];
+    for (i, expr) in list.iter().enumerate() {
+        list_.push((
+            Some(expr.borrow().clone()),
+            if i < list.len()-1 {
+                Some(tok(";"))
+            } else {
+                None
+            }
+        ))
+    }
+
+    Expr::Squiggle(
+        tok(""),
+        list_.swim(o),
+        tok(""),
+    )
+}
+
+
