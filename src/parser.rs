@@ -7,7 +7,7 @@ use crate::errors::ParseError;
 use crate::pool::Pooled;
 use crate::pool::Pool;
 use crate::pool::Swim;
-use crate::pool::Pmap;
+use crate::pool::Pfork;
 
 
 // tree stuff
@@ -30,7 +30,7 @@ type List<'b, 'a> = [(Option<Expr<'b, 'a>>, Option<Token<'a>>)];
 
 type Root<'b, 'a> = (&'b List<'b, 'a>, Option<Token<'a>>);
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Tree<'a>(Pooled<Root<'a, 'a>>);
 
 
@@ -347,57 +347,89 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
 
 // token traversal
 impl<'a> Tree<'a> {
-    pub fn map_tokens<'b, F>(&self, mut cb: F) -> Self
+    pub fn fork_tokens<'b, F>(&self, mut cb: F) -> Self
     where
         F: FnMut(&mut Pool<'b>, Token<'a>) -> Token<'a>,
         'a: 'b
     {
-        self.try_map_tokens(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
+        self.try_fork_tokens(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
     }
 
-    pub fn try_map_tokens<'b, F, E>(&self, cb: F) -> Result<Self, E>
+    pub fn try_fork_tokens<'b, F, E>(&self, cb: F) -> Result<Self, E>
     where
         F: FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>,
         'a: 'b
     {
-        let root = self.0.try_pmap(cb)?;
-        // I don't know why lifetime coercion in pmap only works _sometimes_,
+        let root = self.0.try_pfork(cb)?;
+        // I don't know why lifetime coercion in pfork only works _sometimes_,
         // 'a is strictly >= 'b, so this should coerce? It works fine in
         // from_fn. Oh well, all Rust problems can be solved with transmute
         let root = unsafe { transmute::<Pooled<Root<'b, 'a>>, Pooled<Root<'a, 'a>>>(root) };
         Ok(Tree(root))
     }
+
+    // convenience wrappers
+    pub fn map_tokens<'b, F>(self, cb: F) -> Self
+    where
+        F: FnMut(&mut Pool<'b>, Token<'a>) -> Token<'a>,
+        'a: 'b
+    {
+        self.fork_tokens(cb)
+    }
+
+    pub fn try_map_tokens<'b, F, E>(self, cb: F) -> Result<Self, E>
+    where
+        F: FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>,
+        'a: 'b
+    {
+        self.try_fork_tokens(cb)
+    }
+
+    pub fn visit_tokens<F>(&self, mut cb: F)
+    where
+        F: FnMut(&Token<'a>),
+    {
+        self.fork_tokens(|_, tok| { cb(&tok); tok });
+    }
+
+    pub fn try_visit_tokens<F, E>(&self, mut cb: F) -> Result<(), E>
+    where
+        F: FnMut(&Token<'a>) -> Result<(), E>,
+    {
+        self.try_fork_tokens(|_, tok| { cb(&tok)?; Ok(tok) })?;
+        Ok(())
+    }
 }
 
-impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for Root<'_, 'a> {
-    type Pmapped = Root<'b, 'a>;
+impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for Root<'_, 'a> {
+    type Pforked = Root<'b, 'a>;
 
-    fn _try_pmap<E>(
+    fn _try_pfork<E>(
         &self,
         o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
-    ) -> Result<Self::Pmapped, E> {
+    ) -> Result<Self::Pforked, E> {
         Ok((
-            self.0._try_pmap(o, cb)?.swim(o),
+            self.0._try_pfork(o, cb)?.swim(o),
             self.1.map(|tok| cb(o, tok)).transpose()?
         ))
     }
 }
 
-impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for List<'_, 'a> {
-    type Pmapped = Box<List<'b, 'a>>;
+impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for List<'_, 'a> {
+    type Pforked = Box<List<'b, 'a>>;
 
-    fn _try_pmap<E>(
+    fn _try_pfork<E>(
         &self,
         o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
-    ) -> Result<Self::Pmapped, E> {
+    ) -> Result<Self::Pforked, E> {
         let mut list_ = vec![];
         for (expr, comma) in self.iter() {
             list_.push((
-                expr.as_ref().map(|expr| expr._try_pmap(o, cb)).transpose()?,
+                expr.as_ref().map(|expr| expr._try_pfork(o, cb)).transpose()?,
                 comma.map(|tok| cb(o, tok)).transpose()?
             ));
         }
@@ -405,63 +437,63 @@ impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for List<'_, 'a> {
     }
 }
 
-impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for Expr<'_, 'a> {
-    type Pmapped = Expr<'b, 'a>;
+impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for Expr<'_, 'a> {
+    type Pforked = Expr<'b, 'a>;
 
-    fn _try_pmap<E>(
+    fn _try_pfork<E>(
         &self,
         o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
-    ) -> Result<Self::Pmapped, E> {
+    ) -> Result<Self::Pforked, E> {
         Ok(match self {
             Expr::Sym(tok) => Expr::Sym(cb(o, *tok)?),
             Expr::Lit(tok) => Expr::Lit(cb(o, *tok)?),
             Expr::Decl(expr, tok) => Expr::Decl(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 cb(o, *tok)?,
             ),
             Expr::Call(expr, l, list, r) => Expr::Call(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 cb(o, *l)?,
-                list._try_pmap(o, cb)?.swim(o),
+                list._try_pfork(o, cb)?.swim(o),
                 cb(o, *r)?,
             ),
             Expr::Index(expr, l, list, r) => Expr::Index(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 cb(o, *l)?,
-                list._try_pmap(o, cb)?.swim(o),
+                list._try_pfork(o, cb)?.swim(o),
                 cb(o, *r)?,
             ),
             Expr::Block(expr, l, list, r) => Expr::Block(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 cb(o, *l)?,
-                list._try_pmap(o, cb)?.swim(o),
+                list._try_pfork(o, cb)?.swim(o),
                 cb(o, *r)?,
             ),
             Expr::Unary(tok, expr) => Expr::Unary(
                 cb(o, *tok)?,
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
             ),
             Expr::Suffnary(expr, tok) => Expr::Suffnary(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 cb(o, *tok)?,
             ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
-                lh._try_pmap(o, cb)?.swim(o),
+                lh._try_pfork(o, cb)?.swim(o),
                 cb(o, *tok)?,
-                rh._try_pmap(o, cb)?.swim(o),
+                rh._try_pfork(o, cb)?.swim(o),
             ),
             Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
-                lh._try_pmap(o, cb)?.swim(o),
+                lh._try_pfork(o, cb)?.swim(o),
                 cb(o, *l)?,
-                mh._try_pmap(o, cb)?.swim(o),
+                mh._try_pfork(o, cb)?.swim(o),
                 cb(o, *r)?,
-                rh._try_pmap(o, cb)?.swim(o),
+                rh._try_pfork(o, cb)?.swim(o),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(
                 cb(o, *l)?,
-                list._try_pmap(o, cb)?.swim(o),
+                list._try_pfork(o, cb)?.swim(o),
                 cb(o, *r)?,
             ),
         })
@@ -471,57 +503,91 @@ impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for Expr<'_, 'a> {
 
 // expr traversal
 impl<'a> Tree<'a> {
-    pub fn map_exprs<'b, F>(&self, mut cb: F) -> Self
+    pub fn fork_exprs<'b, F>(&self, mut cb: F) -> Self
     where
         F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Expr<'b, 'a>,
         'a: 'b
     {
-        self.try_map_exprs(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
+        self.try_fork_exprs(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
     }
 
-    pub fn try_map_exprs<'b, F, E>(&self, cb: F) -> Result<Self, E>
+    pub fn try_fork_exprs<'b, F, E>(&self, cb: F) -> Result<Self, E>
     where
         F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>,
         'a: 'b
     {
-        let root = self.0.try_pmap(cb)?;
-        // I don't know why lifetime coercion in pmap only works _sometimes_,
+        let root = self.0.try_pfork(cb)?;
+        // I don't know why lifetime coercion in pfork only works _sometimes_,
         // 'a is strictly >= 'b, so this should coerce? It works fine in
         // from_fn. Oh well, all Rust problems can be solved with transmute
         let root = unsafe { transmute::<Pooled<Root<'b, 'a>>, Pooled<Root<'a, 'a>>>(root) };
         Ok(Tree(root))
     }
+
+    // convenience wrappers
+    pub fn map_exprs<'b, F>(self, cb: F) -> Self
+    where
+        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Expr<'b, 'a>,
+        'a: 'b
+    {
+        self.fork_exprs(cb)
+    }
+
+    pub fn try_map_exprs<'b, F, E>(self, cb: F) -> Result<Self, E>
+    where
+        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>,
+        'a: 'b
+    {
+        self.try_fork_exprs(cb)
+    }
+
+    pub fn visit_exprs<'b, F>(&self, mut cb: F)
+    where
+        F: FnMut(&Expr<'b, 'a>),
+        'a: 'b
+    {
+        self.fork_exprs(|_, tok| { cb(&tok); tok });
+    }
+
+    pub fn try_visit_exprs<'b,  F, E>(&self, mut cb: F) -> Result<(), E>
+    where
+        F: FnMut(&Expr<'b, 'a>) -> Result<(), E>,
+        'a: 'b
+    {
+        self.try_fork_exprs(|_, tok| { cb(&tok)?; Ok(tok) })?;
+        Ok(())
+    }
 }
 
-impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for Root<'_, 'a> {
-    type Pmapped = Root<'b, 'a>;
+impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for Root<'_, 'a> {
+    type Pforked = Root<'b, 'a>;
 
-    fn _try_pmap<E>(
+    fn _try_pfork<E>(
         &self,
         o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
-    ) -> Result<Self::Pmapped, E> {
+    ) -> Result<Self::Pforked, E> {
         Ok((
-            self.0._try_pmap(o, cb)?.swim(o),
+            self.0._try_pfork(o, cb)?.swim(o),
             self.1
         ))
     }
 }
 
-impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for List<'_, 'a> {
-    type Pmapped = Box<List<'b, 'a>>;
+impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for List<'_, 'a> {
+    type Pforked = Box<List<'b, 'a>>;
 
-    fn _try_pmap<E>(
+    fn _try_pfork<E>(
         &self,
         o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
-    ) -> Result<Self::Pmapped, E> {
+    ) -> Result<Self::Pforked, E> {
         let mut list_ = vec![];
         for (expr, comma) in self.iter() {
             list_.push((
-                expr.as_ref().map(|expr| expr._try_pmap(o, cb)).transpose()?,
+                expr.as_ref().map(|expr| expr._try_pfork(o, cb)).transpose()?,
                 *comma
             ));
         }
@@ -529,64 +595,64 @@ impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for List<'_, 'a> {
     }
 }
 
-impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
-    type Pmapped = Expr<'b, 'a>;
+impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
+    type Pforked = Expr<'b, 'a>;
 
-    fn _try_pmap<E>(
+    fn _try_pfork<E>(
         &self,
         o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
         cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
-    ) -> Result<Self::Pmapped, E> {
+    ) -> Result<Self::Pforked, E> {
         // map bottom-up so we are always guaranteed to make progress
         let expr = match self {
             Expr::Sym(tok) => Expr::Sym(*tok),
             Expr::Lit(tok) => Expr::Lit(*tok),
             Expr::Decl(expr, tok) => Expr::Decl(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 *tok,
             ),
             Expr::Call(expr, l, list, r) => Expr::Call(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 *l,
-                list._try_pmap(o, cb)?.swim(o),
+                list._try_pfork(o, cb)?.swim(o),
                 *r,
             ),
             Expr::Index(expr, l, list, r) => Expr::Index(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 *l,
-                list._try_pmap(o, cb)?.swim(o),
+                list._try_pfork(o, cb)?.swim(o),
                 *r,
             ),
             Expr::Block(expr, l, list, r) => Expr::Block(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 *l,
-                list._try_pmap(o, cb)?.swim(o),
+                list._try_pfork(o, cb)?.swim(o),
                 *r,
             ),
             Expr::Unary(tok, expr) => Expr::Unary(
                 *tok,
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
             ),
             Expr::Suffnary(expr, tok) => Expr::Suffnary(
-                expr._try_pmap(o, cb)?.swim(o),
+                expr._try_pfork(o, cb)?.swim(o),
                 *tok,
             ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
-                lh._try_pmap(o, cb)?.swim(o),
+                lh._try_pfork(o, cb)?.swim(o),
                 *tok,
-                rh._try_pmap(o, cb)?.swim(o),
+                rh._try_pfork(o, cb)?.swim(o),
             ),
             Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
-                lh._try_pmap(o, cb)?.swim(o),
+                lh._try_pfork(o, cb)?.swim(o),
                 *l,
-                mh._try_pmap(o, cb)?.swim(o),
+                mh._try_pfork(o, cb)?.swim(o),
                 *r,
-                rh._try_pmap(o, cb)?.swim(o),
+                rh._try_pfork(o, cb)?.swim(o),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(
                 *l,
-                list._try_pmap(o, cb)?.swim(o),
+                list._try_pfork(o, cb)?.swim(o),
                 *r,
             ),
         };
@@ -603,7 +669,7 @@ impl<'a> Tree<'a> {
     pub fn ws(self, ws: &'a str) -> Self {
         let mut first = true;
         let ws = ws.into();
-        self.map_tokens(|_, tok| {
+        self.fork_tokens(|_, tok| {
             if first {
                 let tok = tok.ws(ws);
                 first = false;
@@ -616,7 +682,7 @@ impl<'a> Tree<'a> {
 
     pub fn indent(self, n: usize) -> Self {
         let mut first = true;
-        self.map_tokens(|_, tok: Token<'a>| {
+        self.fork_tokens(|_, tok: Token<'a>| {
             if first {
                 let tok = tok.indent(n);
                 first = false;
@@ -631,7 +697,7 @@ impl<'a> Tree<'a> {
 impl<'b, 'a> Expr<'b, 'a> {
     pub fn ws(self, o: &mut Pool<'b>, ws: &'a str) -> Self {
         let mut first = true;
-        self.pmap(o, |_, tok: Token<'a>| {
+        self.pfork(o, |_, tok: Token<'a>| {
             if first {
                 let tok = tok.ws(ws);
                 first = false;
@@ -644,7 +710,7 @@ impl<'b, 'a> Expr<'b, 'a> {
 
     pub fn indent(self, o: &mut Pool<'b>, n: usize) -> Self {
         let mut first = true;
-        self.pmap(o, |_, tok: Token<'a>| {
+        self.pfork(o, |_, tok: Token<'a>| {
             if first {
                 let tok = tok.indent(n);
                 first = false;
@@ -655,11 +721,3 @@ impl<'b, 'a> Expr<'b, 'a> {
         })
     }
 }
-
-// other traits
-impl<'a> Clone for Tree<'a> {
-    fn clone(&self) -> Self {
-        self.map_tokens(|_, t| t)
-    }
-}
-

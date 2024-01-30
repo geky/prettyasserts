@@ -210,11 +210,11 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     // flatten and write to file
-                    tree.try_map_tokens(|_, tok| {
+                    tree.try_visit_tokens(|tok| {
                         // make sure to keep whitespace!
                         write!(f_, "{}", tok.ws)?;
                         write!(f_, "{}", tok.tok)?;
-                        Ok::<_, anyhow::Error>(tok)
+                        Ok::<_, anyhow::Error>(())
                     })?;
 
                     drop(tree);
@@ -282,11 +282,11 @@ fn main() -> Result<(), anyhow::Error> {
         if let Some(output) = opt.output {
             let f = File::create(output)?;
             let mut f = BufWriter::new(f);
-            tree.try_map_tokens(|_, tok| {
+            tree.try_visit_tokens(|tok| {
                 // make sure to keep whitespace!
                 write!(f, "{}", tok.ws)?;
                 write!(f, "{}", tok.tok)?;
-                Ok::<_, anyhow::Error>(tok)
+                Ok::<_, anyhow::Error>(())
             })?;
         }
     }
