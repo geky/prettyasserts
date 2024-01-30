@@ -27,97 +27,100 @@ use tokenizer::Token;
 use tokenizer::Tt;
 mod pool;
 use pool::Pool;
+use pool::Swim;
 mod parser;
 use parser::parse;
 use parser::Expr;
 
 
-//fn tok<'a>(s: &'a str) -> Token<'a> {
-//    Token::new(Tt::Sym, s)
-//}
-//
-//fn sym<'a>(s: &'a str) -> Expr<'a> {
-//    Expr::Sym(tok(s))
-//}
-//
-//fn squiggle<'a>(exprs: &[Expr<'a>]) -> Expr<'a> {
-//    let mut list = vec![];
-//    for (i, expr) in exprs.iter().enumerate() {
-//        list.push((
-//            Some(expr.clone()),
-//            if i < exprs.len()-1 {
-//                Some(tok(";"))
-//            } else {
-//                None
-//            }
-//        ))
-//    }
-//
-//    Expr::Squiggle(
-//        tok(""),
-//        list,
-//        tok(""),
-//    )
-//}
+fn tok<'a>(s: &'a str) -> Token<'a> {
+    Token::new(Tt::Sym, s)
+}
+
+fn sym<'a>(s: &'a str) -> Expr<'a> {
+    Expr::Sym(tok(s))
+}
+
+fn squiggle<'a>(o: &mut Pool<'a>, exprs: &[Expr<'a>]) -> Expr<'a> {
+    let mut list = vec![];
+    for (i, expr) in exprs.iter().enumerate() {
+        list.push((
+            Some(expr.clone()),
+            if i < exprs.len()-1 {
+                Some(tok(";"))
+            } else {
+                None
+            }
+        ))
+    }
+
+    Expr::Squiggle(
+        tok(""),
+        list.swim(o),
+        tok(""),
+    )
+}
 
 
 // modify the tree
 fn modify<'a>(o: &mut Pool<'a>, expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
-//    if let Expr::Binary(lh, arrow@Token{tt: Tt::BigArrow,..}, rh) = &expr {
-//        if let Expr::Call(sym_, l, list, r) = lh.deref() {
-//            if let Expr::Sym(sym_@Token{tok: Cow::Borrowed("lfsr_rbyd_get"), ..}) = sym_.deref() {
-//                let rh = match rh.deref() {
-//                    rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
-//                    rh => Left(rh),
-//                };
-//
-//                let mut list_ = vec![];
-//                list_.push(Expr::Binary(
-//                    Box::new(Expr::Call(
-//                        Box::new(sym("lfsr_rbyd_lookup").ws(sym_.ws.clone())),
-//                        l.clone(),
-//                        vec![
-//                            list[0].clone(),
-//                            list[1].clone(),
-//                            list[2].clone(),
-//                            list[3].clone(),
-//                            (Some(sym("&data").ws(" ")), None)
-//                        ],
-//                        r.clone(),
-//                    )),
-//                    match rh {
-//                        Left(_) => tok("=>").ws(" "),
-//                        Right(_) => arrow.clone(),
-//                    },
-//                    Box::new(match rh {
-//                        Left(_) => sym("0").ws(" "),
-//                        Right(rh) => rh.clone(),
-//                    }),
-//                ));
-//
-//                if let Left(rh) = rh {
-//                    list_.push(Expr::Binary(
-//                        Box::new(Expr::Call(
-//                            Box::new(sym("lfsr_data_read").indent(sym_.col-1)),
-//                            l.clone(),
-//                            vec![
-//                                (Some(sym("&lfs")), Some(tok(","))),
-//                                (Some(sym("&data").ws(" ")), Some(tok(","))),
-//                                list[4].clone(),
-//                                list[5].clone(),
-//                            ],
-//                            r.clone()
-//                        )),
-//                        tok("=>").ws(" "),
-//                        Box::new(rh.clone()),
-//                    ));
-//                }
-//
-//                return Ok(squiggle(&list_));
-//            }
-//        }
-//    }
-//
+    if let
+        Expr::Binary(
+            Expr::Call(Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}), lp, args, rp),
+            arrow@Token{tt: Tt::BigArrow, ..},
+            rh
+        )
+    = expr {
+        let rh = match rh {
+            rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
+            rh => Left(rh),
+        };
+
+        let mut list_ = vec![];
+        list_.push(Expr::Binary(
+            Expr::Call(
+                sym("lfsr_rbyd_lookup").ws(o, sym_.ws).swim(o),
+                *lp,
+                vec![
+                    args[0].clone(),
+                    args[1].clone(),
+                    args[2].clone(),
+                    args[3].clone(),
+                    (Some(sym("&data").ws(o, " ")), None)
+                ].swim(o),
+                *rp,
+            ).swim(o),
+            match rh {
+                Left(_) => tok("=>").ws(" "),
+                Right(_) => arrow.indent(sym_.col-1+8),
+            },
+            match rh {
+                Left(_) => sym("0").ws(o, " ").swim(o),
+                Right(rh) => rh,
+            },
+        ));
+
+        if let Left(rh) = rh {
+            list_.push(Expr::Binary(
+                Expr::Call(
+                    sym("lfsr_data_read").indent(o, sym_.col-1).swim(o),
+                    *lp,
+                    vec![
+                        (Some(sym("&lfs")), Some(tok(","))),
+                        (Some(sym("&data").ws(o, " ")), Some(tok(","))),
+                        args[4].clone(),
+                        args[5].clone(),
+                    ].swim(o),
+                    *rp
+                ).swim(o),
+                tok("=>").ws(" "),
+                rh.swim(o),
+            ));
+        }
+
+        return Ok(squiggle(o, &list_));
+    }
+
     Ok(expr)
 }
 
