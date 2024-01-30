@@ -28,94 +28,94 @@ use parser::parse;
 use parser::Expr;
 
 
-fn tok<'a>(s: &'a str) -> Token<'a> {
-    Token::new(Tt::Sym, s)
-}
-
-fn sym<'a>(s: &'a str) -> Expr<'a> {
-    Expr::Sym(tok(s))
-}
-
-fn squiggle<'a>(exprs: &[Expr<'a>]) -> Expr<'a> {
-    let mut list = vec![];
-    for (i, expr) in exprs.iter().enumerate() {
-        list.push((
-            Some(expr.clone()),
-            if i < exprs.len()-1 {
-                Some(tok(";"))
-            } else {
-                None
-            }
-        ))
-    }
-
-    Expr::Squiggle(
-        tok(""),
-        list,
-        tok(""),
-    )
-}
+//fn tok<'a>(s: &'a str) -> Token<'a> {
+//    Token::new(Tt::Sym, s)
+//}
+//
+//fn sym<'a>(s: &'a str) -> Expr<'a> {
+//    Expr::Sym(tok(s))
+//}
+//
+//fn squiggle<'a>(exprs: &[Expr<'a>]) -> Expr<'a> {
+//    let mut list = vec![];
+//    for (i, expr) in exprs.iter().enumerate() {
+//        list.push((
+//            Some(expr.clone()),
+//            if i < exprs.len()-1 {
+//                Some(tok(";"))
+//            } else {
+//                None
+//            }
+//        ))
+//    }
+//
+//    Expr::Squiggle(
+//        tok(""),
+//        list,
+//        tok(""),
+//    )
+//}
 
 
 // modify the tree
-fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
-    if let Expr::Binary(lh, arrow@Token{tt: Tt::BigArrow,..}, rh) = &expr {
-        if let Expr::Call(sym_, l, list, r) = lh.deref() {
-            if let Expr::Sym(sym_@Token{tok: Cow::Borrowed("lfsr_rbyd_get"), ..}) = sym_.deref() {
-                let rh = match rh.deref() {
-                    rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
-                    rh => Left(rh),
-                };
-
-                let mut list_ = vec![];
-                list_.push(Expr::Binary(
-                    Box::new(Expr::Call(
-                        Box::new(sym("lfsr_rbyd_lookup").ws(sym_.ws.clone())),
-                        l.clone(),
-                        vec![
-                            list[0].clone(),
-                            list[1].clone(),
-                            list[2].clone(),
-                            list[3].clone(),
-                            (Some(sym("&data").ws(" ")), None)
-                        ],
-                        r.clone(),
-                    )),
-                    match rh {
-                        Left(_) => tok("=>").ws(" "),
-                        Right(_) => arrow.clone(),
-                    },
-                    Box::new(match rh {
-                        Left(_) => sym("0").ws(" "),
-                        Right(rh) => rh.clone(),
-                    }),
-                ));
-
-                if let Left(rh) = rh {
-                    list_.push(Expr::Binary(
-                        Box::new(Expr::Call(
-                            Box::new(sym("lfsr_data_read").indent(sym_.col-1)),
-                            l.clone(),
-                            vec![
-                                (Some(sym("&lfs")), Some(tok(","))),
-                                (Some(sym("&data").ws(" ")), Some(tok(","))),
-                                list[4].clone(),
-                                list[5].clone(),
-                            ],
-                            r.clone()
-                        )),
-                        tok("=>").ws(" "),
-                        Box::new(rh.clone()),
-                    ));
-                }
-
-                return Ok(squiggle(&list_));
-            }
-        }
-    }
-
-    Ok(expr)
-}
+//fn modify<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
+//    if let Expr::Binary(lh, arrow@Token{tt: Tt::BigArrow,..}, rh) = &expr {
+//        if let Expr::Call(sym_, l, list, r) = lh.deref() {
+//            if let Expr::Sym(sym_@Token{tok: Cow::Borrowed("lfsr_rbyd_get"), ..}) = sym_.deref() {
+//                let rh = match rh.deref() {
+//                    rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
+//                    rh => Left(rh),
+//                };
+//
+//                let mut list_ = vec![];
+//                list_.push(Expr::Binary(
+//                    Box::new(Expr::Call(
+//                        Box::new(sym("lfsr_rbyd_lookup").ws(sym_.ws.clone())),
+//                        l.clone(),
+//                        vec![
+//                            list[0].clone(),
+//                            list[1].clone(),
+//                            list[2].clone(),
+//                            list[3].clone(),
+//                            (Some(sym("&data").ws(" ")), None)
+//                        ],
+//                        r.clone(),
+//                    )),
+//                    match rh {
+//                        Left(_) => tok("=>").ws(" "),
+//                        Right(_) => arrow.clone(),
+//                    },
+//                    Box::new(match rh {
+//                        Left(_) => sym("0").ws(" "),
+//                        Right(rh) => rh.clone(),
+//                    }),
+//                ));
+//
+//                if let Left(rh) = rh {
+//                    list_.push(Expr::Binary(
+//                        Box::new(Expr::Call(
+//                            Box::new(sym("lfsr_data_read").indent(sym_.col-1)),
+//                            l.clone(),
+//                            vec![
+//                                (Some(sym("&lfs")), Some(tok(","))),
+//                                (Some(sym("&data").ws(" ")), Some(tok(","))),
+//                                list[4].clone(),
+//                                list[5].clone(),
+//                            ],
+//                            r.clone()
+//                        )),
+//                        tok("=>").ws(" "),
+//                        Box::new(rh.clone()),
+//                    ));
+//                }
+//
+//                return Ok(squiggle(&list_));
+//            }
+//        }
+//    }
+//
+//    Ok(expr)
+//}
 
 
 
@@ -195,20 +195,22 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     // modify!
-                    let tree = tree.try_map_exprs(modify)?;
-
-                    if opt.dump_modified {
-                        println!("{:#?}", tree);
-                        std::process::exit(0);
-                    }
-
-                    // flatten and write to file
-                    tree.try_map_tokens(|tok| {
-                        // make sure to keep whitespace!
-                        write!(f_, "{}", tok.ws)?;
-                        write!(f_, "{}", tok.tok)?;
-                        Ok::<_, anyhow::Error>(tok)
-                    })?;
+// TODO
+//                    let tree = tree.try_map_exprs(modify)?;
+//
+//                    if opt.dump_modified {
+//                        println!("{:#?}", tree);
+//                        std::process::exit(0);
+//                    }
+//
+//                    // flatten and write to file
+//                    tree.try_map_tokens(|tok| {
+//                        // make sure to keep whitespace!
+//                        write!(f_, "{}", tok.ws)?;
+//                        write!(f_, "{}", tok.tok)?;
+//                        Ok::<_, anyhow::Error>(tok)
+//                    })?;
+                    drop(tree);
 
                     in_c = false;
                     chunk.clear();
@@ -262,25 +264,26 @@ fn main() -> Result<(), anyhow::Error> {
             std::process::exit(0);
         }
 
-        // modify!
-        let tree = tree.try_map_exprs(modify)?;
-
-        if opt.dump_modified {
-            println!("{:#?}", tree);
-            std::process::exit(0);
-        }
-
-        // flatten and write to file
-        if let Some(output) = opt.output {
-            let f = File::create(output)?;
-            let mut f = BufWriter::new(f);
-            tree.try_map_tokens(|tok| {
-                // make sure to keep whitespace!
-                write!(f, "{}", tok.ws)?;
-                write!(f, "{}", tok.tok)?;
-                Ok::<_, anyhow::Error>(tok)
-            })?;
-        }
+// TODO
+//        // modify!
+//        let tree = tree.try_map_exprs(modify)?;
+//
+//        if opt.dump_modified {
+//            println!("{:#?}", tree);
+//            std::process::exit(0);
+//        }
+//
+//        // flatten and write to file
+//        if let Some(output) = opt.output {
+//            let f = File::create(output)?;
+//            let mut f = BufWriter::new(f);
+//            tree.try_map_tokens(|tok| {
+//                // make sure to keep whitespace!
+//                write!(f, "{}", tok.ws)?;
+//                write!(f, "{}", tok.tok)?;
+//                Ok::<_, anyhow::Error>(tok)
+//            })?;
+//        }
     }
 
     Ok(())
