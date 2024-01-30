@@ -419,50 +419,50 @@ impl<'b, 'a: 'b> Pmap<'b, Token<'a>> for Expr<'_, 'a> {
             Expr::Lit(tok) => Expr::Lit(cb(o, *tok)?),
             Expr::Decl(expr, tok) => Expr::Decl(
                 expr._try_pmap(o, cb)?.swim(o),
-                cb(o, tok.clone())?,
+                cb(o, *tok)?,
             ),
             Expr::Call(expr, l, list, r) => Expr::Call(
                 expr._try_pmap(o, cb)?.swim(o),
-                cb(o, l.clone())?,
+                cb(o, *l)?,
                 list._try_pmap(o, cb)?.swim(o),
-                cb(o, r.clone())?,
+                cb(o, *r)?,
             ),
             Expr::Index(expr, l, list, r) => Expr::Index(
                 expr._try_pmap(o, cb)?.swim(o),
-                cb(o, l.clone())?,
+                cb(o, *l)?,
                 list._try_pmap(o, cb)?.swim(o),
-                cb(o, r.clone())?,
+                cb(o, *r)?,
             ),
             Expr::Block(expr, l, list, r) => Expr::Block(
                 expr._try_pmap(o, cb)?.swim(o),
-                cb(o, l.clone())?,
+                cb(o, *l)?,
                 list._try_pmap(o, cb)?.swim(o),
-                cb(o, r.clone())?,
+                cb(o, *r)?,
             ),
             Expr::Unary(tok, expr) => Expr::Unary(
-                cb(o, tok.clone())?,
+                cb(o, *tok)?,
                 expr._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Suffnary(expr, tok) => Expr::Suffnary(
                 expr._try_pmap(o, cb)?.swim(o),
-                cb(o, tok.clone())?,
+                cb(o, *tok)?,
             ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
                 lh._try_pmap(o, cb)?.swim(o),
-                cb(o, tok.clone())?,
+                cb(o, *tok)?,
                 rh._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
                 lh._try_pmap(o, cb)?.swim(o),
-                cb(o, l.clone())?,
+                cb(o, *l)?,
                 mh._try_pmap(o, cb)?.swim(o),
-                cb(o, r.clone())?,
+                cb(o, *r)?,
                 rh._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(
-                cb(o, l.clone())?,
+                cb(o, *l)?,
                 list._try_pmap(o, cb)?.swim(o),
-                cb(o, r.clone())?,
+                cb(o, *r)?,
             ),
         })
     }
@@ -504,7 +504,7 @@ impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for Root<'_, 'a> {
     ) -> Result<Self::Pmapped, E> {
         Ok((
             self.0._try_pmap(o, cb)?.swim(o),
-            self.1.clone()
+            self.1
         ))
     }
 }
@@ -522,7 +522,7 @@ impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for List<'_, 'a> {
         for (expr, comma) in self.iter() {
             list_.push((
                 expr.as_ref().map(|expr| expr._try_pmap(o, cb)).transpose()?,
-                comma.clone()
+                *comma
             ));
         }
         Ok(list_.into_boxed_slice())
@@ -540,54 +540,54 @@ impl<'b, 'a: 'b> Pmap<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
     ) -> Result<Self::Pmapped, E> {
         // map bottom-up so we are always guaranteed to make progress
         let expr = match self {
-            Expr::Sym(tok) => Expr::Sym(tok.clone()),
-            Expr::Lit(tok) => Expr::Lit(tok.clone()),
+            Expr::Sym(tok) => Expr::Sym(*tok),
+            Expr::Lit(tok) => Expr::Lit(*tok),
             Expr::Decl(expr, tok) => Expr::Decl(
                 expr._try_pmap(o, cb)?.swim(o),
-                tok.clone(),
+                *tok,
             ),
             Expr::Call(expr, l, list, r) => Expr::Call(
                 expr._try_pmap(o, cb)?.swim(o),
-                l.clone(),
+                *l,
                 list._try_pmap(o, cb)?.swim(o),
-                r.clone(),
+                *r,
             ),
             Expr::Index(expr, l, list, r) => Expr::Index(
                 expr._try_pmap(o, cb)?.swim(o),
-                l.clone(),
+                *l,
                 list._try_pmap(o, cb)?.swim(o),
-                r.clone(),
+                *r,
             ),
             Expr::Block(expr, l, list, r) => Expr::Block(
                 expr._try_pmap(o, cb)?.swim(o),
-                l.clone(),
+                *l,
                 list._try_pmap(o, cb)?.swim(o),
-                r.clone(),
+                *r,
             ),
             Expr::Unary(tok, expr) => Expr::Unary(
-                tok.clone(),
+                *tok,
                 expr._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Suffnary(expr, tok) => Expr::Suffnary(
                 expr._try_pmap(o, cb)?.swim(o),
-                tok.clone(),
+                *tok,
             ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
                 lh._try_pmap(o, cb)?.swim(o),
-                tok.clone(),
+                *tok,
                 rh._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
                 lh._try_pmap(o, cb)?.swim(o),
-                l.clone(),
+                *l,
                 mh._try_pmap(o, cb)?.swim(o),
-                r.clone(),
+                *r,
                 rh._try_pmap(o, cb)?.swim(o),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(
-                l.clone(),
+                *l,
                 list._try_pmap(o, cb)?.swim(o),
-                r.clone(),
+                *r,
             ),
         };
 
