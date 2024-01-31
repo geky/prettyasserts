@@ -32,7 +32,7 @@ pub enum Expr<'b, 'a> {
 
 type List<'b, 'a> = [(Option<Expr<'b, 'a>>, Option<Token<'a>>)];
 
-type Root<'b, 'a> = (&'b List<'b, 'a>, Option<Token<'a>>);
+type Root<'b, 'a> = (&'b List<'b, 'a>, Token<'a>);
 
 #[derive(Debug, Clone)]
 pub struct Tree<'a>(Pooled<Root<'a, 'a>>);
@@ -92,7 +92,10 @@ impl<'c, 'b, 'a> Parser<'c, 'b, 'a> {
 
 
 // entry point
-pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
+pub fn parse<'a>(
+    file: &'a Path,
+    tokens: &[Token<'a>]
+) -> Result<Tree<'a>, ParseError> {
     // define parse rules
     fn parse_expr<'c, 'b, 'a>(
         p: &mut Parser<'c, 'b, 'a>
@@ -330,8 +333,8 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
         })
     }
 
-    // parse inside a memory swim
-    let root = Pooled::try_from_fn(|o| {
+    // parse inside a memory pool
+    Ok(Tree(Pooled::try_from_fn(|o| {
         // create parser
         let mut p = Parser::new(tokens, o);
 
@@ -340,9 +343,16 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
 
         // just kind of shove any trailing whitespace into our tree
         let tws = if let Some(Tt::TrailingWs) = p.tt() {
-            Some(p.munch())
+            p.munch()
         } else {
-            None
+            Token{
+                file: file,
+                line: tokens.last().map(|tok| tok.line).unwrap_or(1),
+                col: tokens.last().map(|tok| tok.col).unwrap_or(1),
+                tt: Tt::TrailingWs,
+                lws: "",
+                tok: "",
+            }
         };
 
         // we should have consumed all tokens here
@@ -351,9 +361,7 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
         }
 
         Ok((root, tws))
-    })?;
-
-    Ok(Tree(root))
+    })?))
 }
 
 
@@ -517,7 +525,7 @@ impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for Root<'_, 'a> {
     ) -> Result<Self::Pforked, E> {
         Ok((
             self.0._try_pfork(o, cb)?.swim(o),
-            self.1.map(|tws| tws._try_pspoon(o, cb)).transpose()?
+            self.1._try_pspoon(o, cb)?
         ))
     }
 }

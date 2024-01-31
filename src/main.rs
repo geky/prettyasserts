@@ -184,7 +184,7 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     // parse
-                    let mut tree = match parse(&tokens) {
+                    let mut tree = match parse(&opt.input, &tokens) {
                         Ok(tree) => tree,
                         Err(err) => {
                             err.print_context();
@@ -250,7 +250,7 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
         // parse
-        let tree = match parse(&tokens) {
+        let tree = match parse(&opt.input, &tokens) {
             Ok(tree) => tree,
             Err(err) => {
                 err.print_context();
