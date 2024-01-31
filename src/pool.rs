@@ -1,9 +1,10 @@
 
+use std::borrow::Borrow;
+use std::borrow::BorrowMut;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::mem::transmute;
 use std::cell::RefCell;
-use std::borrow::BorrowMut;
 use std::rc::Rc;
 
 
@@ -100,6 +101,18 @@ impl<T> AsMut<T> for Pooled<T> {
     }
 }
 
+impl<T> Borrow<T> for Pooled<T> {
+    fn borrow(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> BorrowMut<T> for Pooled<T> {
+    fn borrow_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
+
 impl<T> Deref for Pooled<T> {
     type Target = T;
 
@@ -134,12 +147,53 @@ pub trait Pfork<'a, M> {
         cb: &mut dyn FnMut(&mut Pool<'a>, M) -> Result<M, E>
     ) -> Result<Self::Pforked, E>;
 
+    fn _pmap(
+        self,
+        o: &mut Pool<'a>,
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(&mut Pool<'a>, M) -> M
+    ) -> Self::Pforked
+    where
+        Self: Sized
+    {
+        self._try_pmap(o, &mut |o, t| Ok::<_, ()>(cb(o, t))).unwrap()
+    }
+
+    fn _try_pmap<E>(
+        self,
+        o: &mut Pool<'a>,
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(&mut Pool<'a>, M) -> Result<M, E>
+    ) -> Result<Self::Pforked, E>
+    where
+        Self: Sized
+    {
+        self._try_pfork(o, cb)
+    }
+
+    fn _pvisit(
+        &self,
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(&M)
+    ) {
+        self._try_pvisit(&mut |t| Ok::<_, ()>(cb(t))).unwrap()
+    }
+
+    fn _try_pvisit<E>(
+        &self,
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(&M) -> Result<(), E>
+    ) -> Result<(), E> {
+        let mut o = Pool::new();
+        self._try_pfork(&mut o, &mut |_, t| {cb(&t)?; Ok(t)})?;
+        Ok(())
+    }
+
     // convenience wrappers, but if recursion is used use the above or
     // else Rust will barf when the compiler itself overflows
     fn pfork<F>(
         &self,
         o: &mut Pool<'a>,
-        // recursion makes the compiler explode if f is generic!
         mut cb: F
     ) -> Self::Pforked
     where
@@ -151,7 +205,6 @@ pub trait Pfork<'a, M> {
     fn try_pfork<F, E>(
         &self,
         o: &mut Pool<'a>,
-        // recursion makes the compiler explode if f is generic!
         mut cb: F
     ) -> Result<Self::Pforked, E>
     where
@@ -159,10 +212,54 @@ pub trait Pfork<'a, M> {
     {
         self._try_pfork(o, &mut cb)
     }
+
+    fn pmap<F>(
+        self,
+        o: &mut Pool<'a>,
+        mut cb: F
+    ) -> Self::Pforked
+    where
+        F: FnMut(&mut Pool<'a>, M) -> M,
+        Self: Sized
+    {
+        self._pmap(o, &mut cb)
+    }
+
+    fn try_pmap<F, E>(
+        self,
+        o: &mut Pool<'a>,
+        mut cb: F
+    ) -> Result<Self::Pforked, E>
+    where
+        F: FnMut(&mut Pool<'a>, M) -> Result<M, E>,
+        Self: Sized
+    {
+        self._try_pmap(o, &mut cb)
+    }
+
+    fn pvisit<F>(
+        &self,
+        mut cb: F
+    )
+    where
+        F: FnMut(&M)
+    {
+        self._pvisit(&mut cb)
+    }
+
+    fn try_pvisit<F, E>(
+        &self,
+        mut cb: F
+    ) -> Result<(), E>
+    where
+        F: FnMut(&M) -> Result<(), E>
+    {
+        self._try_pvisit(&mut cb)
+    }
 }
 
 impl<T> Pooled<T> {
-    pub fn pfork<'a, M, F,>(&self, mut cb: F) -> Pooled<T::Pforked>
+    pub fn pfork<'a, M, F>(&self, mut cb: F) -> Pooled<T::Pforked>
     where
         T: Pfork<'a, M>,
         F: FnMut(&mut Pool<'a>, M) -> M
@@ -183,6 +280,38 @@ impl<T> Pooled<T> {
             &mut cb
         )?;
         Ok(Pooled(t, Rc::new(o)))
+    }
+
+    pub fn pmap<'a, M, F>(self, mut cb: F) -> Pooled<T::Pforked>
+    where
+        T: Pfork<'a, M>,
+        F: FnMut(&mut Pool<'a>, M) -> M
+    {
+        self.try_pmap(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
+    }
+
+    pub fn try_pmap<'a, M, F, E>(self, cb: F) -> Result<Pooled<T::Pforked>, E>
+    where
+        T: Pfork<'a, M>,
+        F: FnMut(&mut Pool<'a>, M) -> Result<M, E>
+    {
+        self.try_pfork(cb)
+    }
+
+    pub fn pvisit<'a, M, F>(&self, cb: F)
+    where
+        T: Pfork<'a, M>,
+        F: FnMut(&M)
+    {
+        self.0.pvisit(cb)
+    }
+
+    pub fn try_pvisit<'a, M, F, E>(&self, cb: F) -> Result<(), E>
+    where
+        T: Pfork<'a, M>,
+        F: FnMut(&M) -> Result<(), E>
+    {
+        self.0.try_pvisit(cb)
     }
 }
 

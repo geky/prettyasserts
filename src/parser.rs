@@ -1,5 +1,9 @@
+
+use either::{Either, Left, Right};
+
 use std::borrow::Cow;
 use std::mem::transmute;
+use std::cell::RefCell;
 
 use crate::tokenizer::Token;
 use crate::tokenizer::Tt;
@@ -355,7 +359,210 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
 
 //// traversals ////
 
+// it's complicated, but this combined traversal impl means we only need to
+// actually navigate the tree structure once
+enum Spoon<'b, 'a> {
+    Expr(Expr<'b, 'a>),
+    Token(Token<'a>)
+}
+
+trait Pspoon<'b, 'a>: Sized {
+    fn _try_pspoon<E>(
+        &self,
+        o: &mut Pool<'b>,
+        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+    ) -> Result<Self, E>;
+}
+
+impl<'b, 'a> Pspoon<'b, 'a> for Token<'a> {
+    fn _try_pspoon<E>(
+        &self,
+        o: &mut Pool<'b>,
+        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+    ) -> Result<Self, E> {
+        Ok(match cb(o, Spoon::Token(*self))? {
+            Spoon::Token(self_) => self_,
+            _ => unreachable!(),
+        })
+    }
+}
+
+impl<'b, 'a> Pspoon<'b, 'a> for Expr<'b, 'a> {
+    fn _try_pspoon<E>(
+        &self,
+        o: &mut Pool<'b>,
+        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+    ) -> Result<Self, E> {
+        Ok(match cb(o, Spoon::Expr(*self))? {
+            Spoon::Expr(self_) => self_,
+            _ => unreachable!(),
+        })
+    }
+}
+
+
+
+
+impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for Expr<'_, 'a> {
+    type Pforked = Expr<'b, 'a>;
+
+    fn _try_pfork<E>(
+        &self,
+        o: &mut Pool<'b>,
+        // this recursion makes the compiler explode if generic!
+        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+    ) -> Result<Self::Pforked, E> {
+        // map bottom-up so we are always guaranteed to make progress
+        let expr = match *self {
+            Expr::Sym(tok) => Expr::Sym(tok._try_pspoon(o, cb)?),
+            Expr::Lit(tok) => Expr::Lit(tok._try_pspoon(o, cb)?),
+            Expr::Decl(expr, tok) => Expr::Decl(
+                expr._try_pfork(o, cb)?.swim(o),
+                tok._try_pspoon(o, cb)?,
+            ),
+            Expr::Call(expr, l, list, r) => Expr::Call(
+                expr._try_pfork(o, cb)?.swim(o),
+                l._try_pspoon(o, cb)?,
+                list._try_pfork(o, cb)?.swim(o),
+                r._try_pspoon(o, cb)?,
+            ),
+            Expr::Index(expr, l, list, r) => Expr::Index(
+                expr._try_pfork(o, cb)?.swim(o),
+                l._try_pspoon(o, cb)?,
+                list._try_pfork(o, cb)?.swim(o),
+                r._try_pspoon(o, cb)?,
+            ),
+            Expr::Block(expr, l, list, r) => Expr::Block(
+                expr._try_pfork(o, cb)?.swim(o),
+                l._try_pspoon(o, cb)?,
+                list._try_pfork(o, cb)?.swim(o),
+                r._try_pspoon(o, cb)?,
+            ),
+            Expr::Unary(tok, expr) => Expr::Unary(
+                tok._try_pspoon(o, cb)?,
+                expr._try_pfork(o, cb)?.swim(o),
+            ),
+            Expr::Suffnary(expr, tok) => Expr::Suffnary(
+                expr._try_pfork(o, cb)?.swim(o),
+                tok._try_pspoon(o, cb)?,
+            ),
+            Expr::Binary(lh, tok, rh) => Expr::Binary(
+                lh._try_pfork(o, cb)?.swim(o),
+                tok._try_pspoon(o, cb)?,
+                rh._try_pfork(o, cb)?.swim(o),
+            ),
+            Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
+                lh._try_pfork(o, cb)?.swim(o),
+                l._try_pspoon(o, cb)?,
+                mh._try_pfork(o, cb)?.swim(o),
+                r._try_pspoon(o, cb)?,
+                rh._try_pfork(o, cb)?.swim(o),
+            ),
+            Expr::Squiggle(l, list, r) => Expr::Squiggle(
+                l._try_pspoon(o, cb)?,
+                list._try_pfork(o, cb)?.swim(o),
+                r._try_pspoon(o, cb)?,
+            ),
+        };
+
+        expr._try_pspoon(o, cb)
+    }
+}
+
+impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for List<'_, 'a> {
+    type Pforked = Box<List<'b, 'a>>;
+
+    fn _try_pfork<E>(
+        &self,
+        o: &mut Pool<'b>,
+        // this recursion makes the compiler explode if generic!
+        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+    ) -> Result<Self::Pforked, E> {
+        let mut list_ = vec![];
+        for (expr, comma) in self.iter() {
+            list_.push((
+                expr.map(|expr| expr._try_pfork(o, cb)).transpose()?,
+                comma.map(|comma| comma._try_pspoon(o, cb)).transpose()?
+            ));
+        }
+        Ok(list_.into_boxed_slice())
+    }
+}
+
+impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for Root<'_, 'a> {
+    type Pforked = Root<'b, 'a>;
+
+    fn _try_pfork<E>(
+        &self,
+        o: &mut Pool<'b>,
+        // this recursion makes the compiler explode if generic!
+        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+    ) -> Result<Self::Pforked, E> {
+        Ok((
+            self.0._try_pfork(o, cb)?.swim(o),
+            self.1.map(|tws| tws._try_pspoon(o, cb)).transpose()?
+        ))
+    }
+}
+
+
+// now we can make these a bit prettier
+
 // token traversal
+impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for Expr<'_, 'a> {
+    type Pforked = Expr<'b, 'a>;
+
+    fn _try_pfork<E>(
+        &self,
+        o: &mut Pool<'b>,
+        // this recursion makes the compiler explode if generic!
+        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
+    ) -> Result<Self::Pforked, E> {
+        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
+            Ok(match spoon {
+                Spoon::Token(tok) => Spoon::Token(cb(o, tok)?),
+                spoon => spoon,
+            })
+        })
+    }
+}
+
+impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for List<'_, 'a> {
+    type Pforked = Box<List<'b, 'a>>;
+
+    fn _try_pfork<E>(
+        &self,
+        o: &mut Pool<'b>,
+        // this recursion makes the compiler explode if generic!
+        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
+    ) -> Result<Self::Pforked, E> {
+        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
+            Ok(match spoon {
+                Spoon::Token(tok) => Spoon::Token(cb(o, tok)?),
+                spoon => spoon,
+            })
+        })
+    }
+}
+
+impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for Root<'_, 'a> {
+    type Pforked = Root<'b, 'a>;
+
+    fn _try_pfork<E>(
+        &self,
+        o: &mut Pool<'b>,
+        // this recursion makes the compiler explode if generic!
+        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
+    ) -> Result<Self::Pforked, E> {
+        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
+            Ok(match spoon {
+                Spoon::Token(tok) => Spoon::Token(cb(o, tok)?),
+                spoon => spoon,
+            })
+        })
+    }
+}
+
 impl<'a> Tree<'a> {
     pub fn fork_tokens<'b, F>(&self, mut cb: F) -> Self
     where
@@ -395,123 +602,77 @@ impl<'a> Tree<'a> {
         self.try_fork_tokens(cb)
     }
 
-    pub fn visit_tokens<F>(&self, mut cb: F)
+    pub fn visit_tokens<F>(&self, cb: F)
     where
-        F: FnMut(&Token<'a>),
+        F: FnMut(&Token<'a>)
     {
-        self.fork_tokens(|_, tok| { cb(&tok); tok });
+        self.0.pvisit(cb)
     }
 
-    pub fn try_visit_tokens<F, E>(&self, mut cb: F) -> Result<(), E>
+    pub fn try_visit_tokens<F, E>(&self, cb: F) -> Result<(), E>
     where
-        F: FnMut(&Token<'a>) -> Result<(), E>,
+        F: FnMut(&Token<'a>) -> Result<(), E>
     {
-        self.try_fork_tokens(|_, tok| { cb(&tok)?; Ok(tok) })?;
-        Ok(())
+        self.0.try_pvisit(cb)
     }
 }
 
-impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for Root<'_, 'a> {
-    type Pforked = Root<'b, 'a>;
 
-    fn _try_pfork<E>(
-        &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
-    ) -> Result<Self::Pforked, E> {
-        Ok((
-            self.0._try_pfork(o, cb)?.swim(o),
-            self.1.map(|tok| cb(o, tok)).transpose()?
-        ))
-    }
-}
-
-impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for List<'_, 'a> {
-    type Pforked = Box<List<'b, 'a>>;
-
-    fn _try_pfork<E>(
-        &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
-    ) -> Result<Self::Pforked, E> {
-        let mut list_ = vec![];
-        for (expr, comma) in self.iter() {
-            list_.push((
-                expr.as_ref().map(|expr| expr._try_pfork(o, cb)).transpose()?,
-                comma.map(|tok| cb(o, tok)).transpose()?
-            ));
-        }
-        Ok(list_.into_boxed_slice())
-    }
-}
-
-impl<'b, 'a: 'b> Pfork<'b, Token<'a>> for Expr<'_, 'a> {
+// expr traversal
+impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
     type Pforked = Expr<'b, 'a>;
 
     fn _try_pfork<E>(
         &self,
         o: &mut Pool<'b>,
         // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
+        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
     ) -> Result<Self::Pforked, E> {
-        Ok(match self {
-            Expr::Sym(tok) => Expr::Sym(cb(o, *tok)?),
-            Expr::Lit(tok) => Expr::Lit(cb(o, *tok)?),
-            Expr::Decl(expr, tok) => Expr::Decl(
-                expr._try_pfork(o, cb)?.swim(o),
-                cb(o, *tok)?,
-            ),
-            Expr::Call(expr, l, list, r) => Expr::Call(
-                expr._try_pfork(o, cb)?.swim(o),
-                cb(o, *l)?,
-                list._try_pfork(o, cb)?.swim(o),
-                cb(o, *r)?,
-            ),
-            Expr::Index(expr, l, list, r) => Expr::Index(
-                expr._try_pfork(o, cb)?.swim(o),
-                cb(o, *l)?,
-                list._try_pfork(o, cb)?.swim(o),
-                cb(o, *r)?,
-            ),
-            Expr::Block(expr, l, list, r) => Expr::Block(
-                expr._try_pfork(o, cb)?.swim(o),
-                cb(o, *l)?,
-                list._try_pfork(o, cb)?.swim(o),
-                cb(o, *r)?,
-            ),
-            Expr::Unary(tok, expr) => Expr::Unary(
-                cb(o, *tok)?,
-                expr._try_pfork(o, cb)?.swim(o),
-            ),
-            Expr::Suffnary(expr, tok) => Expr::Suffnary(
-                expr._try_pfork(o, cb)?.swim(o),
-                cb(o, *tok)?,
-            ),
-            Expr::Binary(lh, tok, rh) => Expr::Binary(
-                lh._try_pfork(o, cb)?.swim(o),
-                cb(o, *tok)?,
-                rh._try_pfork(o, cb)?.swim(o),
-            ),
-            Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
-                lh._try_pfork(o, cb)?.swim(o),
-                cb(o, *l)?,
-                mh._try_pfork(o, cb)?.swim(o),
-                cb(o, *r)?,
-                rh._try_pfork(o, cb)?.swim(o),
-            ),
-            Expr::Squiggle(l, list, r) => Expr::Squiggle(
-                cb(o, *l)?,
-                list._try_pfork(o, cb)?.swim(o),
-                cb(o, *r)?,
-            ),
+        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
+            Ok(match spoon {
+                Spoon::Expr(tok) => Spoon::Expr(cb(o, tok)?),
+                spoon => spoon,
+            })
         })
     }
 }
 
+impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for List<'_, 'a> {
+    type Pforked = Box<List<'b, 'a>>;
 
-// expr traversal
+    fn _try_pfork<E>(
+        &self,
+        o: &mut Pool<'b>,
+        // this recursion makes the compiler explode if generic!
+        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
+    ) -> Result<Self::Pforked, E> {
+        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
+            Ok(match spoon {
+                Spoon::Expr(tok) => Spoon::Expr(cb(o, tok)?),
+                spoon => spoon,
+            })
+        })
+    }
+}
+
+impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for Root<'_, 'a> {
+    type Pforked = Root<'b, 'a>;
+
+    fn _try_pfork<E>(
+        &self,
+        o: &mut Pool<'b>,
+        // this recursion makes the compiler explode if generic!
+        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
+    ) -> Result<Self::Pforked, E> {
+        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
+            Ok(match spoon {
+                Spoon::Expr(tok) => Spoon::Expr(cb(o, tok)?),
+                spoon => spoon,
+            })
+        })
+    }
+}
+
 impl<'a> Tree<'a> {
     pub fn fork_exprs<'b, F>(&self, mut cb: F) -> Self
     where
@@ -551,154 +712,58 @@ impl<'a> Tree<'a> {
         self.try_fork_exprs(cb)
     }
 
-    pub fn visit_exprs<'b, F>(&self, mut cb: F)
+    pub fn visit_exprs<'b, F>(&self, cb: F)
     where
         F: FnMut(&Expr<'b, 'a>),
         'a: 'b
     {
-        self.fork_exprs(|_, tok| { cb(&tok); tok });
+        self.0.pvisit(cb)
     }
 
-    pub fn try_visit_exprs<'b,  F, E>(&self, mut cb: F) -> Result<(), E>
+    pub fn try_visit_exprs<'b,  F, E>(&self, cb: F) -> Result<(), E>
     where
         F: FnMut(&Expr<'b, 'a>) -> Result<(), E>,
         'a: 'b
     {
-        self.try_fork_exprs(|_, tok| { cb(&tok)?; Ok(tok) })?;
-        Ok(())
+        self.0.try_pvisit(cb)
     }
 }
 
-impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for Root<'_, 'a> {
-    type Pforked = Root<'b, 'a>;
-
-    fn _try_pfork<E>(
-        &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
-    ) -> Result<Self::Pforked, E> {
-        Ok((
-            self.0._try_pfork(o, cb)?.swim(o),
-            self.1
-        ))
-    }
-}
-
-impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for List<'_, 'a> {
-    type Pforked = Box<List<'b, 'a>>;
-
-    fn _try_pfork<E>(
-        &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
-    ) -> Result<Self::Pforked, E> {
-        let mut list_ = vec![];
-        for (expr, comma) in self.iter() {
-            list_.push((
-                expr.as_ref().map(|expr| expr._try_pfork(o, cb)).transpose()?,
-                *comma
-            ));
-        }
-        Ok(list_.into_boxed_slice())
-    }
-}
-
-impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
-    type Pforked = Expr<'b, 'a>;
-
-    fn _try_pfork<E>(
-        &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
-    ) -> Result<Self::Pforked, E> {
-        // map bottom-up so we are always guaranteed to make progress
-        let expr = match self {
-            Expr::Sym(tok) => Expr::Sym(*tok),
-            Expr::Lit(tok) => Expr::Lit(*tok),
-            Expr::Decl(expr, tok) => Expr::Decl(
-                expr._try_pfork(o, cb)?.swim(o),
-                *tok,
-            ),
-            Expr::Call(expr, l, list, r) => Expr::Call(
-                expr._try_pfork(o, cb)?.swim(o),
-                *l,
-                list._try_pfork(o, cb)?.swim(o),
-                *r,
-            ),
-            Expr::Index(expr, l, list, r) => Expr::Index(
-                expr._try_pfork(o, cb)?.swim(o),
-                *l,
-                list._try_pfork(o, cb)?.swim(o),
-                *r,
-            ),
-            Expr::Block(expr, l, list, r) => Expr::Block(
-                expr._try_pfork(o, cb)?.swim(o),
-                *l,
-                list._try_pfork(o, cb)?.swim(o),
-                *r,
-            ),
-            Expr::Unary(tok, expr) => Expr::Unary(
-                *tok,
-                expr._try_pfork(o, cb)?.swim(o),
-            ),
-            Expr::Suffnary(expr, tok) => Expr::Suffnary(
-                expr._try_pfork(o, cb)?.swim(o),
-                *tok,
-            ),
-            Expr::Binary(lh, tok, rh) => Expr::Binary(
-                lh._try_pfork(o, cb)?.swim(o),
-                *tok,
-                rh._try_pfork(o, cb)?.swim(o),
-            ),
-            Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
-                lh._try_pfork(o, cb)?.swim(o),
-                *l,
-                mh._try_pfork(o, cb)?.swim(o),
-                *r,
-                rh._try_pfork(o, cb)?.swim(o),
-            ),
-            Expr::Squiggle(l, list, r) => Expr::Squiggle(
-                *l,
-                list._try_pfork(o, cb)?.swim(o),
-                *r,
-            ),
-        };
-
-        cb(o, expr)
-    }
-}
 
 
 //// utils ///
 
+use std::path::Path;
+
 // whitespace stuff
 impl<'b, 'a> Expr<'b, 'a> {
+    pub fn file(&self) -> &'a Path {
+        self.try_pvisit(|tok: &Token<'a>| Err(tok.file)).unwrap_err()
+    }
+
+    pub fn line(&self) -> usize {
+        self.try_pvisit(|tok: &Token<'a>| Err(tok.line)).unwrap_err()
+    }
+
+    pub fn col(&self) -> usize {
+        self.try_pvisit(|tok: &Token<'a>| Err(tok.col)).unwrap_err()
+    }
+
     pub fn lws(self, o: &mut Pool<'b>, ws: &'a str) -> Self {
         let mut first = true;
-        self.pfork(o, |_, tok: Token<'a>| {
-            if first {
-                let tok = tok.lws(ws);
-                first = false;
-                tok
-            } else {
-                tok
-            }
+        self.pmap(o, |_, tok: Token<'a>| {
+            let tok = if first { tok.lws(ws) } else { tok };
+            first = false;
+            tok
         })
     }
 
     pub fn indent(self, o: &mut Pool<'b>, n: usize) -> Self {
         let mut first = true;
-        self.pfork(o, |_, tok: Token<'a>| {
-            if first {
-                let tok = tok.indent(n);
-                first = false;
-                tok
-            } else {
-                tok
-            }
+        self.pmap(o, |_, tok: Token<'a>| {
+            let tok = if first { tok.indent(n) } else { tok };
+            first = false;
+            tok
         })
     }
 }

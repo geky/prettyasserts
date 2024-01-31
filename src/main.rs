@@ -41,13 +41,13 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
     if let
         index@Expr::Index(
             Expr::Decl(
-                Expr::Sym(tok@Token{tok: "uint8_t", ..}),
+                Expr::Sym(Token{tok: "uint8_t", ..}),
                 Token{tok: "buffer", ..},
             ),
             ..
         ) = expr
     {
-        let data = sym("lfsr_data_t data").indent(o, tok.col-1);
+        let data = sym("lfsr_data_t data").indent(o, index.col()-1);
         return Ok(span(o, &[
             data,
             index,
