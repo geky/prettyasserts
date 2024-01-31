@@ -763,7 +763,7 @@ impl<'b, 'a> Expr<'b, 'a> {
 use crate::tokenizer::tok;
 use std::borrow::Borrow;
 
-pub fn sym<'a, S: Into<Cow<'a, str>>>(s: S) -> Expr<'static, 'a> {
+pub fn sym<'a, S: Into<Cow<'a, str>>>(s: S) -> Expr<'a, 'a> {
     Expr::Sym(tok(s))
 }
 
