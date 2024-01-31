@@ -39,12 +39,35 @@ use parser::span;
 // modify the tree
 fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, anyhow::Error> {
     if let
+        ref index@Expr::Index(
+            Expr::Decl(
+                Expr::Sym(ref tok@Token{tok: "uint8_t", ..}),
+                Token{tok: "buffer", ..},
+            ),
+            ..
+        ) = expr
+    {
+        let data = sym("lfsr_data_t data").indent(o, tok.col-1);
+        return Ok(span(o, &[
+            &data,
+            index,
+        ]));
+    }
+
+    if let
         Expr::Binary(
-            Expr::Call(Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}), lp, args, rp),
+            Expr::Call(
+                Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}),
+                lp,
+                args,
+                rp
+            ),
             arrow@Token{tt: Tt::BigArrow, ..},
             rh
         ) = expr
     {
+        // left => no error
+        // right => error
         let rh = match rh {
             rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
             rh => Left(rh),
@@ -60,14 +83,14 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
                     args[1].clone(),
                     args[2].clone(),
                     args[3].clone(),
-                    (Some(sym("&data").lws(o, " ")), None)
+                    (Some(match rh {
+                        Left(_) => sym("&data").lws(o, " "),
+                        Right(_) => sym("&data").indent(o, sym_.col-1+8),
+                    }), None)
                 ].swim(o),
                 *rp,
             ).swim(o),
-            match rh {
-                Left(_) => tok("=>").lws(" "),
-                Right(_) => arrow.indent(sym_.col-1+8),
-            },
+            arrow.lws(" "),
             match rh {
                 Left(_) => sym("0").lws(o, " ").swim(o),
                 Right(rh) => rh,
@@ -158,7 +181,6 @@ fn main() -> Result<(), anyhow::Error> {
 
                     if opt.dump_tokens {
                         println!("{:#?}", tokens);
-                        std::process::exit(0);
                     }
 
                     // parse
@@ -172,7 +194,6 @@ fn main() -> Result<(), anyhow::Error> {
 
                     if opt.dump_tree {
                         println!("{:#?}", tree);
-                        std::process::exit(0);
                     }
 
                     // modify!
@@ -180,7 +201,6 @@ fn main() -> Result<(), anyhow::Error> {
 
                     if opt.dump_modified {
                         println!("{:#?}", tree);
-                        std::process::exit(0);
                     }
 
                     // flatten and write to file
@@ -227,7 +247,6 @@ fn main() -> Result<(), anyhow::Error> {
 
         if opt.dump_tokens {
             println!("{:#?}", tokens);
-            std::process::exit(0);
         }
 
         // parse
@@ -241,7 +260,6 @@ fn main() -> Result<(), anyhow::Error> {
 
         if opt.dump_tree {
             println!("{:#?}", tree);
-            std::process::exit(0);
         }
 
         // modify!
@@ -249,7 +267,6 @@ fn main() -> Result<(), anyhow::Error> {
 
         if opt.dump_modified {
             println!("{:#?}", tree);
-            std::process::exit(0);
         }
 
         // flatten and write to file

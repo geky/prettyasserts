@@ -129,14 +129,15 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
                     _ => return Err(p.unexpected()),
                 },
             ),
-            Some(Tt::LSquiggle) => Expr::Squiggle(
+            // squiggles terminate
+            Some(Tt::LSquiggle) => return Ok(Some(Expr::Squiggle(
                 p.munch(),
                 parse_list(p)?.swim(&mut p.o),
                 match p.tt() {
                     Some(Tt::RSquiggle) => p.munch(),
                     _ => return Err(p.unexpected()),
                 },
-            ),
+            ))),
             _ => return Ok(None),
         };
 
@@ -270,7 +271,8 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
                         _ => return Err(p.unexpected()),
                     },
                 ),
-                Some(Tt::LSquiggle) => Expr::Block(
+                // squiggles terminate
+                Some(Tt::LSquiggle) => return Ok(Some(Expr::Block(
                     lh.swim(&mut p.o),
                     p.munch(),
                     parse_list(p)?.swim(&mut p.o),
@@ -278,7 +280,7 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
                         Some(Tt::RSquiggle) => p.munch(),
                         _ => return Err(p.unexpected()),
                     },
-                ),
+                ))),
                 _ => break,
             }
         }
@@ -307,12 +309,20 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
                 _               => None,
             };
 
-            if expr.is_some() || comma.is_some() {
-                list.push((expr, comma));
+            match (&expr, &comma) {
+                (Some(Expr::Squiggle(..)), _)
+                    | (Some(Expr::Block(..)), _)
+                    | (_, Some(_))
+                => {
+                    list.push((expr, comma));
+                    continue;
+                },
+                (Some(_), _) => {
+                    list.push((expr, comma));
+                }
+                (None, None) => {}
             }
-            if comma.is_none() {
-                break list.into_boxed_slice();
-            }
+            break list.into_boxed_slice();
         })
     }
 
@@ -665,34 +675,6 @@ impl<'b, 'a: 'b> Pfork<'b, Expr<'b, 'a>> for Expr<'_, 'a> {
 //// utils ///
 
 // whitespace stuff
-impl<'a> Tree<'a> {
-    pub fn lws(self, ws: &'a str) -> Self {
-        let mut first = true;
-        self.fork_tokens(|_, tok| {
-            if first {
-                let tok = tok.lws(ws);
-                first = false;
-                tok
-            } else {
-                tok
-            }
-        })
-    }
-
-    pub fn indent(self, n: usize) -> Self {
-        let mut first = true;
-        self.fork_tokens(|_, tok: Token<'a>| {
-            if first {
-                let tok = tok.indent(n);
-                first = false;
-                tok
-            } else {
-                tok
-            }
-        })
-    }
-}
-
 impl<'b, 'a> Expr<'b, 'a> {
     pub fn lws(self, o: &mut Pool<'b>, ws: &'a str) -> Self {
         let mut first = true;
@@ -732,12 +714,10 @@ pub fn sym<'a, S: Into<Cow<'a, str>>>(s: S) -> Expr<'static, 'a> {
 
 // a span is sort of an invisible squiggle, usually for injecting multiple
 // exprs into a single expr
-pub fn span<'b, 'a, I>(o: &mut Pool<'b>, list: I) -> Expr<'b, 'a>
-where
-    I: IntoIterator,
-    I::Item: Borrow<Expr<'b, 'a>>,
-{
-    let list = list.into_iter().collect::<Vec<_>>();
+pub fn span<'b, 'a, E: Borrow<Expr<'b, 'a>>>(
+    o: &mut Pool<'b>,
+    list: &[E]
+) -> Expr<'b, 'a> {
     let mut list_ = vec![];
     for (i, expr) in list.iter().enumerate() {
         list_.push((
