@@ -11,7 +11,7 @@ use crate::pool::Pfork;
 
 
 // tree stuff
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Expr<'b, 'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),

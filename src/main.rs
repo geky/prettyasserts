@@ -39,9 +39,9 @@ use parser::span;
 // modify the tree
 fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, anyhow::Error> {
     if let
-        ref index@Expr::Index(
+        index@Expr::Index(
             Expr::Decl(
-                Expr::Sym(ref tok@Token{tok: "uint8_t", ..}),
+                Expr::Sym(tok@Token{tok: "uint8_t", ..}),
                 Token{tok: "buffer", ..},
             ),
             ..
@@ -49,7 +49,7 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
     {
         let data = sym("lfsr_data_t data").indent(o, tok.col-1);
         return Ok(span(o, &[
-            &data,
+            data,
             index,
         ]));
     }
@@ -79,10 +79,10 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
                 sym("lfsr_rbyd_lookup").lws(o, sym_.lws).swim(o),
                 *lp,
                 vec![
-                    args[0].clone(),
-                    args[1].clone(),
-                    args[2].clone(),
-                    args[3].clone(),
+                    args[0],
+                    args[1],
+                    args[2],
+                    args[3],
                     (Some(match rh {
                         Left(_) => sym("&data").lws(o, " "),
                         Right(_) => sym("&data").indent(o, sym_.col-1+8),
@@ -105,8 +105,8 @@ fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, 
                     vec![
                         (Some(sym("&lfs")), Some(tok(","))),
                         (Some(sym("&data").lws(o, " ")), Some(tok(","))),
-                        args[4].clone(),
-                        args[5].clone(),
+                        args[4],
+                        args[5],
                     ].swim(o),
                     *rp
                 ).swim(o),
