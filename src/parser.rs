@@ -11,9 +11,7 @@ use crate::errors::ParseError;
 use crate::pool::Pooled;
 use crate::pool::Pool;
 use crate::pool::Swim;
-use crate::pool::Pvisit;
 use crate::pool::Pfork;
-use crate::pool::Pmap;
 
 
 // tree stuff
@@ -363,9 +361,6 @@ pub fn parse<'a>(tokens: &[Token<'a>]) -> Result<Tree<'a>, ParseError> {
 
 // it's complicated, but this combined traversal impl means we only need to
 // actually navigate the tree structure once
-
-// ugh, this needs to be pub because pub constraints can't be expressed on
-// associated types
 pub enum Spoon<'b, 'a> {
     Expr(Expr<'b, 'a>),
     Token(Token<'a>)
@@ -423,98 +418,6 @@ impl<'b, 'a> Pspoon<'b, 'a> for Expr<'b, 'a> {
         })
     }
 }
-
-
-// visit impls
-impl<'b, 'a> Pvisit<Spoon<'b, 'a>> for Expr<'b, 'a> {
-    fn _try_pvisit<E>(
-        &self,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&Spoon<'b, 'a>) -> Result<(), E>
-    ) -> Result<(), E> {
-        // map bottom-up so we are always guaranteed to make progress
-        match self {
-            Expr::Sym(tok) => tok._try_spoon(cb)?,
-            Expr::Lit(tok) => tok._try_spoon(cb)?,
-            Expr::Decl(expr, tok) => {
-                expr._try_pvisit(cb)?;
-                tok._try_spoon(cb)?;
-            }
-            Expr::Call(expr, l, list, r) => {
-                expr._try_pvisit(cb)?;
-                l._try_spoon(cb)?;
-                list._try_pvisit(cb)?;
-                r._try_spoon(cb)?;
-            }
-            Expr::Index(expr, l, list, r) => {
-                expr._try_pvisit(cb)?;
-                l._try_spoon(cb)?;
-                list._try_pvisit(cb)?;
-                r._try_spoon(cb)?;
-            }
-            Expr::Block(expr, l, list, r) => {
-                expr._try_pvisit(cb)?;
-                l._try_spoon(cb)?;
-                list._try_pvisit(cb)?;
-                r._try_spoon(cb)?;
-            }
-            Expr::Unary(tok, expr) => {
-                tok._try_spoon(cb)?;
-                expr._try_pvisit(cb)?;
-            }
-            Expr::Suffnary(expr, tok) => {
-                expr._try_pvisit(cb)?;
-                tok._try_spoon(cb)?;
-            }
-            Expr::Binary(lh, tok, rh) => {
-                lh._try_pvisit(cb)?;
-                tok._try_spoon(cb)?;
-                rh._try_pvisit(cb)?;
-            }
-            Expr::Ternary(lh, l, mh, r, rh) => {
-                lh._try_pvisit(cb)?;
-                l._try_spoon(cb)?;
-                mh._try_pvisit(cb)?;
-                r._try_spoon(cb)?;
-                rh._try_pvisit(cb)?;
-            }
-            Expr::Squiggle(l, list, r) => {
-                l._try_spoon(cb)?;
-                list._try_pvisit(cb)?;
-                r._try_spoon(cb)?;
-            }
-        };
-
-        self._try_spoon(cb)
-    }
-}
-
-impl<'b, 'a> Pvisit<Spoon<'b, 'a>> for List<'b, 'a> {
-    fn _try_pvisit<E>(
-        &self,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&Spoon<'b, 'a>) -> Result<(), E>
-    ) -> Result<(), E> {
-        for (expr, comma) in self.iter() {
-            expr.map(|expr| expr._try_pvisit(cb)).transpose()?;
-            comma.map(|comma| comma._try_spoon(cb)).transpose()?;
-        }
-        Ok(())
-    }
-}
-
-impl<'b, 'a> Pvisit<Spoon<'b, 'a>> for Root<'b, 'a> {
-    fn _try_pvisit<E>(
-        &self,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&Spoon<'b, 'a>) -> Result<(), E>
-    ) -> Result<(), E> {
-        self.0._try_pvisit(cb)?;
-        self.1.map(|tws| tws._try_spoon(cb)).transpose()?;
-        Ok(())
-    }
-}
-
 
 // fork impls
 impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for Expr<'_, 'a> {
@@ -623,24 +526,6 @@ impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for Root<'_, 'a> {
 // now we can make these a bit prettier
 
 // token traversal
-impl<'b, 'a: 'b, T> Pvisit<Token<'a>> for T
-where
-    T: Pvisit<Spoon<'b, 'a>>
-{
-    fn _try_pvisit<E>(
-        &self,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&Token<'a>) -> Result<(), E>
-    ) -> Result<(), E> {
-        self._try_pvisit(&mut |spoon: &Spoon<'b, 'a>| {
-            if let Spoon::Token(tok) = spoon {
-                cb(tok)?;
-            }
-            Ok(())
-        })
-    }
-}
-
 impl<'b, 'a: 'b, T> Pfork<'b, Token<'a>> for T
 where
     T: Pfork<'b, Spoon<'b, 'a>>
@@ -718,24 +603,6 @@ impl<'a> Tree<'a> {
 
 
 // expr traversal
-impl<'b, 'a, T> Pvisit<Expr<'b, 'a>> for T
-where
-    T: Pvisit<Spoon<'b, 'a>>
-{
-    fn _try_pvisit<E>(
-        &self,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&Expr<'b, 'a>) -> Result<(), E>
-    ) -> Result<(), E> {
-        self._try_pvisit(&mut |spoon: &Spoon<'b, 'a>| {
-            if let Spoon::Expr(tok) = spoon {
-                cb(tok)?;
-            }
-            Ok(())
-        })
-    }
-}
-
 impl<'b, 'a: 'b, T> Pfork<'b, Expr<'b, 'a>> for T
 where
     T: Pfork<'b, Spoon<'b, 'a>>
