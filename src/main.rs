@@ -62,8 +62,15 @@ fn edit<'b, 'a>(
             Expr::Call(
                 Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}),
                 lp,
-                args,
-                rp
+                &[
+                    lfs,
+                    rbyd,
+                    rid,
+                    tag,
+                    buffer,
+                    size
+                ],
+                rp,
             ),
             arrow@Token{tt: Tt::BigArrow, ..},
             rh
@@ -81,11 +88,11 @@ fn edit<'b, 'a>(
             Expr::Call(
                 sym("lfsr_rbyd_lookup").lws(o, sym_.lws).swim(o),
                 *lp,
-                vec![
-                    args[0],
-                    args[1],
-                    args[2],
-                    args[3],
+                [
+                    lfs,
+                    rbyd,
+                    rid,
+                    tag,
                     (Some(match rh {
                         Left(_) => sym("&data").lws(o, " "),
                         Right(_) => sym("&data").indent(o, sym_.col-1+8),
@@ -105,11 +112,11 @@ fn edit<'b, 'a>(
                 Expr::Call(
                     sym("lfsr_data_read").indent(o, sym_.col-1).swim(o),
                     *lp,
-                    vec![
+                    [
                         (Some(sym("&lfs")), Some(tok(","))),
                         (Some(sym("&data").lws(o, " ")), Some(tok(","))),
-                        args[4],
-                        args[5],
+                        buffer,
+                        size,
                     ].swim(o),
                     *rp
                 ).swim(o),
