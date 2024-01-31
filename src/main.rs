@@ -36,8 +36,11 @@ use parser::sym;
 use parser::span;
 
 
-// modify the tree
-fn modify<'b, 'a>(o: &mut Pool<'b>, expr: Expr<'b, 'a>) -> Result<Expr<'b, 'a>, anyhow::Error> {
+// edit the tree
+fn edit<'b, 'a>(
+    o: &mut Pool<'b>,
+    expr: Expr<'b, 'a>
+) -> Result<Expr<'b, 'a>, anyhow::Error> {
     if let
         index@Expr::Index(
             Expr::Decl(
@@ -196,8 +199,8 @@ fn main() -> Result<(), anyhow::Error> {
                         println!("{:#?}", tree);
                     }
 
-                    // modify!
-                    tree = tree.try_map_exprs(modify)?;
+                    // edit!
+                    tree = tree.try_map_exprs(edit)?;
 
                     if opt.dump_modified {
                         println!("{:#?}", tree);
@@ -262,8 +265,8 @@ fn main() -> Result<(), anyhow::Error> {
             println!("{:#?}", tree);
         }
 
-        // modify!
-        let tree = tree.try_map_exprs(modify)?;
+        // edit!
+        let tree = tree.try_map_exprs(edit)?;
 
         if opt.dump_modified {
             println!("{:#?}", tree);
