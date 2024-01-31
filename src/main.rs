@@ -86,7 +86,7 @@ fn edit<'b, 'a>(
         let mut list_ = vec![];
         list_.push(Expr::Binary(
             Expr::Call(
-                sym("lfsr_rbyd_lookup").lws(o, sym_.lws).swim(o),
+                sym("lfsr_rbyd_lookup").lws_(o, sym_.lws).swim(o),
                 *lp,
                 [
                     lfs,
@@ -94,15 +94,15 @@ fn edit<'b, 'a>(
                     rid,
                     tag,
                     (Some(match rh {
-                        Left(_) => sym("&data").lws(o, " "),
+                        Left(_) => sym("&data").lws_(o, " "),
                         Right(_) => sym("&data").indent(o, sym_.col-1+8),
                     }), None)
                 ].swim(o),
                 *rp,
             ).swim(o),
-            arrow.lws(" "),
+            arrow.lws_(" "),
             match rh {
-                Left(_) => sym("0").lws(o, " ").swim(o),
+                Left(_) => sym("0").lws_(o, " ").swim(o),
                 Right(rh) => rh,
             },
         ));
@@ -114,13 +114,13 @@ fn edit<'b, 'a>(
                     *lp,
                     [
                         (Some(sym("&lfs")), Some(tok(","))),
-                        (Some(sym("&data").lws(o, " ")), Some(tok(","))),
+                        (Some(sym("&data").lws_(o, " ")), Some(tok(","))),
                         buffer,
                         size,
                     ].swim(o),
                     *rp
                 ).swim(o),
-                tok("=>").lws(" "),
+                tok("=>").lws_(" "),
                 rh.swim(o),
             ));
         }

@@ -708,10 +708,41 @@ impl<'b, 'a> Expr<'b, 'a> {
         self.try_pvisit(|tok: &Token<'a>| Err(tok.col)).unwrap_err()
     }
 
-    pub fn lws(self, o: &mut Pool<'b>, ws: &'a str) -> Self {
+    pub fn lws(&self) -> &'a str {
+        self.try_pvisit(|tok: &Token<'a>| Err(tok.lws)).unwrap_err()
+    }
+
+    pub fn file_(self, o: &mut Pool<'b>, file: &'a Path) -> Self {
         let mut first = true;
         self.pmap(o, |_, tok: Token<'a>| {
-            let tok = if first { tok.lws(ws) } else { tok };
+            let tok = if first { tok.file_(file) } else { tok };
+            first = false;
+            tok
+        })
+    }
+
+    pub fn line_(self, o: &mut Pool<'b>, line: usize) -> Self {
+        let mut first = true;
+        self.pmap(o, |_, tok: Token<'a>| {
+            let tok = if first { tok.line_(line) } else { tok };
+            first = false;
+            tok
+        })
+    }
+
+    pub fn col_(self, o: &mut Pool<'b>, col: usize) -> Self {
+        let mut first = true;
+        self.pmap(o, |_, tok: Token<'a>| {
+            let tok = if first { tok.col_(col) } else { tok };
+            first = false;
+            tok
+        })
+    }
+
+    pub fn lws_(self, o: &mut Pool<'b>, lws: &'a str) -> Self {
+        let mut first = true;
+        self.pmap(o, |_, tok: Token<'a>| {
+            let tok = if first { tok.lws_(lws) } else { tok };
             first = false;
             tok
         })

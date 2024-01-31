@@ -81,15 +81,36 @@ impl<'a> Token<'a> {
         }
     }
 
-    pub fn lws(self, ws: &'a str) -> Self {
+    pub fn file_(self, path: &'a Path) -> Self {
         Self{
-            lws: ws.into(),
+            file: path,
+            ..self
+        }
+    }
+
+    pub fn line_(self, line: usize) -> Self {
+        Self{
+            line: line,
+            ..self
+        }
+    }
+
+    pub fn col_(self, col: usize) -> Self {
+        Self{
+            col: col,
+            ..self
+        }
+    }
+
+    pub fn lws_(self, lws: &'a str) -> Self {
+        Self{
+            lws: lws,
             ..self
         }
     }
 
     pub fn indent(self, n: usize) -> Self {
-        self.lws(&INDENT[..n+1])
+        self.lws_(&INDENT[..n+1])
     }
 }
 
