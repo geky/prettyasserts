@@ -9,7 +9,6 @@ use either::{Left, Right};
 use std::path::PathBuf;
 use std::fs;
 use std::fs::File;
-use std::rc::Rc;
 use std::ops::Deref;
 use std::borrow::Cow;
 use std::io::BufReader;
@@ -20,113 +19,111 @@ use std::io::Write;
 
 // The actual parser is over here
 mod errors;
+mod rc;
+use rc::Rc;
+use rc::Transmute;
 mod tokenizer;
 use tokenizer::tokenize;
 use tokenizer::tokenize_at;
 use tokenizer::Token;
 use tokenizer::Tt;
 use tokenizer::tok;
-mod pool;
-use pool::Pool;
-use pool::Swim;
 mod parser;
 use parser::parse;
-use parser::Expr;
+use parser::{Expr, Expr_};
 use parser::sym;
 use parser::span;
+use parser::Map;
 
 
 // edit the tree
-fn edit<'b, 'a>(
-    o: &mut Pool<'b>,
-    expr: Expr<'b, 'a>
-) -> Result<Expr<'b, 'a>, anyhow::Error> {
+fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
     if let
-        index@Expr::Index(
-            Expr::Decl(
-                Expr::Sym(Token{tok: "uint8_t", ..}),
+        index@Expr_::Index(
+            Expr_::Decl(
+                Expr_::Sym(Token{tok: "uint8_t", ..}),
                 Token{tok: "buffer", ..},
             ),
             ..
-        ) = expr
+        ) = expr.transmute()
     {
-        let data = sym("lfsr_data_t data").indent(o, index.col()-1);
-        return Ok(span(o, &[
+        let data = sym("lfsr_data_t data").indent(index.col()-1);
+        return Ok(span([
             data,
             index,
         ]));
     }
 
-    if let
-        Expr::Binary(
-            Expr::Call(
-                Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}),
-                lp,
-                &[
-                    lfs,
-                    rbyd,
-                    rid,
-                    tag,
-                    buffer,
-                    size
-                ],
-                rp,
-            ),
-            arrow@Token{tt: Tt::BigArrow, ..},
-            rh
-        ) = expr
-    {
-        // left => no error
-        // right => error
-        let rh = match rh {
-            rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
-            rh => Left(rh),
-        };
-
-        let mut list_ = vec![];
-        list_.push(Expr::Binary(
-            Expr::Call(
-                sym("lfsr_rbyd_lookup").lws_(o, sym_.lws).swim(o),
-                *lp,
-                [
-                    lfs,
-                    rbyd,
-                    rid,
-                    tag,
-                    (Some(match rh {
-                        Left(_) => sym("&data").lws_(o, " "),
-                        Right(_) => sym("&data").indent(o, sym_.col-1+8),
-                    }), None)
-                ].swim(o),
-                *rp,
-            ).swim(o),
-            arrow.lws_(" "),
-            match rh {
-                Left(_) => sym("0").lws_(o, " ").swim(o),
-                Right(rh) => rh,
-            },
-        ));
-
-        if let Left(rh) = rh {
-            list_.push(Expr::Binary(
-                Expr::Call(
-                    sym("lfsr_data_read").indent(o, sym_.col-1).swim(o),
-                    *lp,
-                    [
-                        (Some(sym("&lfs")), Some(tok(","))),
-                        (Some(sym("&data").lws_(o, " ")), Some(tok(","))),
-                        buffer,
-                        size,
-                    ].swim(o),
-                    *rp
-                ).swim(o),
-                tok("=>").lws_(" "),
-                rh.swim(o),
-            ));
-        }
-
-        return Ok(span(o, &list_));
-    }
+//    if let
+//        Expr::Binary(
+//            Expr::Call(
+//                Expr::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}),
+//                lp,
+//                &[
+//                    lfs,
+//                    rbyd,
+//                    rid,
+//                    tag,
+//                    buffer,
+//                    size
+//                ],
+//                rp,
+//            ),
+//            arrow@Token{tt: Tt::BigArrow, ..},
+//            rh
+//        ) = expr
+//    {
+//        // left => no error
+//        // right => error
+//        let rh = match rh {
+//            rh@Expr::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
+//            rh => Left(rh),
+//        };
+//
+//        let mut list_ = vec![];
+//        list_.push(Expr::Binary(
+//            Expr::Call(
+//                sym("lfsr_rbyd_lookup").lws_(o, sym_.lws).swim(o),
+//                *lp,
+//                [
+//                    lfs,
+//                    rbyd,
+//                    rid,
+//                    tag,
+//                    (Some(match rh {
+//                        Left(_) => sym("&data").lws_(o, " "),
+//                        Right(_) => sym("&data").indent(o, sym_.col-1+8),
+//                    }), None)
+//                ].swim(o),
+//                *rp,
+//            ).swim(o),
+//            arrow.lws_(" "),
+//            match rh {
+//                Left(_) => sym("0").lws_(o, " ").swim(o),
+//                Right(rh) => rh,
+//            },
+//        ));
+//
+//        if let Left(rh) = rh {
+//            list_.push(Expr::Binary(
+//                Expr::Call(
+//                    sym("lfsr_data_read").indent(o, sym_.col-1).swim(o),
+//                    *lp,
+//                    [
+//                        (Some(sym("&lfs")), Some(tok(","))),
+//                        (Some(sym("&data").lws_(o, " ")), Some(tok(","))),
+//                        buffer,
+//                        size,
+//                    ].swim(o),
+//                    *rp
+//                ).swim(o),
+//                tok("=>").lws_(" "),
+//                rh.swim(o),
+//            ));
+//        }
+//
+//        return Ok(span(o, &list_));
+//    }
 
     Ok(expr)
 }
@@ -207,14 +204,14 @@ fn main() -> Result<(), anyhow::Error> {
                     }
 
                     // edit!
-                    tree = tree.try_map_exprs(edit)?;
+                    tree = tree.try_map(edit)?;
 
                     if opt.dump_modified {
                         println!("{:#?}", tree);
                     }
 
                     // flatten and write to file
-                    tree.try_visit_tokens(|tok| {
+                    tree.try_visit(|tok: &Token<'_>| {
                         // make sure to keep whitespace!
                         write!(f_, "{}", tok.lws)?;
                         write!(f_, "{}", tok.tok)?;
@@ -260,7 +257,7 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
         // parse
-        let tree = match parse(&opt.input, &tokens) {
+        let mut tree = match parse(&opt.input, &tokens) {
             Ok(tree) => tree,
             Err(err) => {
                 err.print_context();
@@ -273,7 +270,7 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
         // edit!
-        let tree = tree.try_map_exprs(edit)?;
+        tree = tree.try_map(edit)?;
 
         if opt.dump_modified {
             println!("{:#?}", tree);
@@ -283,7 +280,7 @@ fn main() -> Result<(), anyhow::Error> {
         if let Some(output) = opt.output {
             let f = File::create(output)?;
             let mut f = BufWriter::new(f);
-            tree.try_visit_tokens(|tok| {
+            tree.try_visit(|tok: &Token<'_>| {
                 // make sure to keep whitespace!
                 write!(f, "{}", tok.lws)?;
                 write!(f, "{}", tok.tok)?;

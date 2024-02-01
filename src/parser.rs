@@ -4,55 +4,73 @@ use either::{Either, Left, Right};
 use std::borrow::Cow;
 use std::mem::transmute;
 use std::cell::RefCell;
+use std::path::Path;
 
 use crate::tokenizer::Token;
 use crate::tokenizer::Tt;
 use crate::errors::ParseError;
-use crate::pool::Pooled;
-use crate::pool::Pool;
-use crate::pool::Swim;
-use crate::pool::Pfork;
+use crate::rc::Rc;
+use crate::rc::Transmute;
 
 
 // tree stuff
-#[derive(Debug, Clone, Copy)]
-pub enum Expr<'b, 'a> {
+#[derive(Debug, Clone)]
+pub enum Expr<'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
-    Decl(&'b Expr<'b, 'a>, Token<'a>),
-    Call(&'b Expr<'b, 'a>, Token<'a>, &'b List<'b, 'a>, Token<'a>),
-    Index(&'b Expr<'b, 'a>, Token<'a>, &'b List<'b, 'a>, Token<'a>),
-    Block(&'b Expr<'b, 'a>, Token<'a>, &'b List<'b, 'a>, Token<'a>),
-    Unary(Token<'a>, &'b Expr<'b, 'a>),
-    Suffnary(&'b Expr<'b, 'a>, Token<'a>),
-    Binary(&'b Expr<'b, 'a>, Token<'a>, &'b Expr<'b, 'a>),
-    Ternary(&'b Expr<'b, 'a>, Token<'a>, &'b Expr<'b, 'a>, Token<'a>, &'b Expr<'b, 'a>),
-    Squiggle(Token<'a>, &'b List<'b, 'a>, Token<'a>),
+    Decl(Rc<Expr<'a>>, Token<'a>),
+    Call(Rc<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
+    Index(Rc<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
+    Block(Rc<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
+    Unary(Token<'a>, Rc<Expr<'a>>),
+    Suffnary(Rc<Expr<'a>>, Token<'a>),
+    Binary(Rc<Expr<'a>>, Token<'a>, Rc<Expr<'a>>),
+    Ternary(Rc<Expr<'a>>, Token<'a>, Rc<Expr<'a>>, Token<'a>, Rc<Expr<'a>>),
+    Squiggle(Token<'a>, List<'a>, Token<'a>),
 }
 
-type List<'b, 'a> = [(Option<Expr<'b, 'a>>, Option<Token<'a>>)];
-
-type Root<'b, 'a> = (&'b List<'b, 'a>, Token<'a>);
+type List<'a> = Rc<[(Option<Expr<'a>>, Option<Token<'a>>)]>;
 
 #[derive(Debug, Clone)]
-pub struct Tree<'a>(Pooled<Root<'a, 'a>>);
+pub struct Tree<'a>(List<'a>, Token<'a>);
+
+#[derive(Debug, Clone, Copy)]
+pub enum Expr_<'b, 'a> {
+    Sym(Token<'a>),
+    Lit(Token<'a>),
+    Decl(&'b Expr_<'b, 'a>, Token<'a>),
+    Call(&'b Expr_<'b, 'a>, Token<'a>, List_<'b, 'a>, Token<'a>),
+    Index(&'b Expr_<'b, 'a>, Token<'a>, List_<'b, 'a>, Token<'a>),
+    Block(&'b Expr_<'b, 'a>, Token<'a>, List_<'b, 'a>, Token<'a>),
+    Unary(Token<'a>, &'b Expr_<'b, 'a>),
+    Suffnary(&'b Expr_<'b, 'a>, Token<'a>),
+    Binary(&'b Expr_<'b, 'a>, Token<'a>, &'b Expr_<'b, 'a>),
+    Ternary(&'b Expr_<'b, 'a>, Token<'a>, &'b Expr_<'b, 'a>, Token<'a>, &'b Expr_<'b, 'a>),
+    Squiggle(Token<'a>, List_<'b, 'a>, Token<'a>),
+}
+
+type List_<'b, 'a> = &'b [(Option<Expr_<'b, 'a>>, Option<Token<'a>>)];
+
+#[derive(Debug, Clone, Copy)]
+pub struct Tree_<'b, 'a>(List_<'b, 'a>, Token<'a>);
+
+unsafe impl<'b, 'a> Transmute<'b, Expr_<'b, 'a>> for Expr<'a> {}
+unsafe impl<'b, 'a> Transmute<'b, List_<'b, 'a>> for Expr<'a> {}
+unsafe impl<'b, 'a> Transmute<'b, Tree_<'b, 'a>> for Tree<'a> {}
 
 
 // helper for pattern matching
-struct Parser<'c, 'b, 'a> {
+struct Parser<'b, 'a> {
     // input state
-    tokens: &'c [Token<'a>],
+    tokens: &'b [Token<'a>],
     i: usize,
-
-    o: &'c mut Pool<'b>
 }
 
-impl<'c, 'b, 'a> Parser<'c, 'b, 'a> {
-    fn new(tokens: &'c [Token<'a>], o: &'c mut Pool<'b>) -> Self {
+impl<'b, 'a> Parser<'b, 'a> {
+    fn new(tokens: &'b [Token<'a>]) -> Self {
         Self{
             tokens: tokens,
             i: 0,
-            o: o,
         }
     }
 
@@ -60,7 +78,7 @@ impl<'c, 'b, 'a> Parser<'c, 'b, 'a> {
         self.i >= self.tokens.len()
     }
 
-    fn tail(&self) -> &'c [Token<'a>] {
+    fn tail(&self) -> &'b [Token<'a>] {
         &self.tokens[self.i..]
     }
 
@@ -96,41 +114,44 @@ pub fn parse<'a>(
     file: &'a Path,
     tokens: &[Token<'a>]
 ) -> Result<Tree<'a>, ParseError> {
+    // create parser
+    let mut p = Parser::new(tokens);
+
     // define parse rules
-    fn parse_expr<'c, 'b, 'a>(
-        p: &mut Parser<'c, 'b, 'a>
-    ) -> Result<Option<Expr<'b, 'a>>, ParseError> {
+    fn parse_expr<'b, 'a>(
+        p: &mut Parser<'b, 'a>
+    ) -> Result<Option<Expr<'a>>, ParseError> {
         let mut lh = match p.tt() {
             Some(Tt::Sym) => Expr::Sym(p.munch()),
             Some(Tt::Number) => Expr::Lit(p.munch()),
             Some(Tt::String) => Expr::Lit(p.munch()),
             Some(Tt::Tilde) => Expr::Unary(
                 p.munch(),
-                parse_expr_required(p)?.swim(&mut p.o),
+                Rc::new(parse_expr_required(p)?),
             ),
             Some(Tt::Add) => Expr::Unary(
                 p.munch(),
-                parse_expr_required(p)?.swim(&mut p.o),
+                Rc::new(parse_expr_required(p)?),
             ),
             Some(Tt::Sub) => Expr::Unary(
                 p.munch(),
-                parse_expr_required(p)?.swim(&mut p.o),
+                Rc::new(parse_expr_required(p)?),
             ),
             Some(Tt::And) => Expr::Unary(
                 p.munch(),
-                parse_expr_required(p)?.swim(&mut p.o),
+                Rc::new(parse_expr_required(p)?),
             ),
             Some(Tt::Dot) => Expr::Unary(
                 p.munch(),
-                parse_expr_required(p)?.swim(&mut p.o),
+                Rc::new(parse_expr_required(p)?),
             ),
             Some(Tt::Not) => Expr::Unary(
                 p.munch(),
-                parse_expr_required(p)?.swim(&mut p.o),
+                Rc::new(parse_expr_required(p)?),
             ),
             Some(Tt::LParen) => Expr::Squiggle(
                 p.munch(),
-                parse_list(p)?.swim(&mut p.o),
+                parse_list(p)?,
                 match p.tt() {
                     Some(Tt::RParen) => p.munch(),
                     _ => return Err(p.unexpected()),
@@ -139,7 +160,7 @@ pub fn parse<'a>(
             // squiggles terminate
             Some(Tt::LSquiggle) => return Ok(Some(Expr::Squiggle(
                 p.munch(),
-                parse_list(p)?.swim(&mut p.o),
+                parse_list(p)?,
                 match p.tt() {
                     Some(Tt::RSquiggle) => p.munch(),
                     _ => return Err(p.unexpected()),
@@ -150,129 +171,129 @@ pub fn parse<'a>(
 
         loop {
             lh = match p.tt() {
-                Some(Tt::Sym) => Expr::Decl(lh.swim(&mut p.o), p.munch()),
+                Some(Tt::Sym) => Expr::Decl(Rc::new(lh), p.munch()),
                 Some(Tt::PlusPlus) => Expr::Suffnary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
                 ),
                 Some(Tt::Dot) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Splat) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Slash) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Mod) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Add) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Sub) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::And) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::OrOr) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Eq) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Ne) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Le) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Ge) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Lt) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Gt) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Assign) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::AddAssign) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::SubAssign) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Arrow) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::BigArrow) => Expr::Binary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::Question) => Expr::Ternary(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                     match p.tt() {
                         Some(Tt::Colon) => p.munch(),
                         _ => return Err(p.unexpected()),
                     },
-                    parse_expr_required(p)?.swim(&mut p.o),
+                    Rc::new(parse_expr_required(p)?),
                 ),
                 Some(Tt::LParen) => Expr::Call(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_list(p)?.swim(&mut p.o),
+                    parse_list(p)?,
                     match p.tt() {
                         Some(Tt::RParen) => p.munch(),
                         _ => return Err(p.unexpected()),
                     },
                 ),
                 Some(Tt::LSquare) => Expr::Index(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_list(p)?.swim(&mut p.o),
+                    parse_list(p)?,
                     match p.tt() {
                         Some(Tt::RSquare) => p.munch(),
                         _ => return Err(p.unexpected()),
@@ -280,9 +301,9 @@ pub fn parse<'a>(
                 ),
                 // squiggles terminate
                 Some(Tt::LSquiggle) => return Ok(Some(Expr::Block(
-                    lh.swim(&mut p.o),
+                    Rc::new(lh),
                     p.munch(),
-                    parse_list(p)?.swim(&mut p.o),
+                    parse_list(p)?,
                     match p.tt() {
                         Some(Tt::RSquiggle) => p.munch(),
                         _ => return Err(p.unexpected()),
@@ -295,18 +316,18 @@ pub fn parse<'a>(
         Ok(Some(lh))
     }
 
-    fn parse_expr_required<'c, 'b, 'a>(
-        p: &mut Parser<'c, 'b, 'a>
-    ) -> Result<Expr<'b, 'a>, ParseError> {
+    fn parse_expr_required<'b, 'a>(
+        p: &mut Parser<'b, 'a>
+    ) -> Result<Expr<'a>, ParseError> {
         Ok(match parse_expr(p)? {
             Some(expr) => expr,
             None => return Err(p.unexpected()),
         })
     }
 
-    fn parse_list<'c, 'b, 'a>(
-        p: &mut Parser<'c, 'b, 'a>
-    ) -> Result<Box<List<'b, 'a>>, ParseError> {
+    fn parse_list<'b, 'a>(
+        p: &mut Parser<'b, 'a>
+    ) -> Result<List<'a>, ParseError> {
         let mut list = vec![];
         Ok(loop {
             let expr = parse_expr(p)?;
@@ -329,39 +350,33 @@ pub fn parse<'a>(
                 }
                 (None, None) => {}
             }
-            break list.into_boxed_slice();
+            break list.into();
         })
     }
 
-    // parse inside a memory pool
-    Ok(Tree(Pooled::try_from_fn(|o| {
-        // create parser
-        let mut p = Parser::new(tokens, o);
+    // start parsing
+    let root = parse_list(&mut p)?;
 
-        // start parsing
-        let root = parse_list(&mut p)?.swim(&mut p.o).as_ref();
-
-        // just kind of shove any trailing whitespace into our tree
-        let tws = if let Some(Tt::TrailingWs) = p.tt() {
-            p.munch()
-        } else {
-            Token{
-                file: file,
-                line: tokens.last().map(|tok| tok.line).unwrap_or(1),
-                col: tokens.last().map(|tok| tok.col).unwrap_or(1),
-                tt: Tt::TrailingWs,
-                lws: "",
-                tok: "",
-            }
-        };
-
-        // we should have consumed all tokens here
-        if !p.is_done() {
-            return Err(p.unexpected());
+    // just kind of shove any trailing whitespace into our tree
+    let tws = if let Some(Tt::TrailingWs) = p.tt() {
+        p.munch()
+    } else {
+        Token{
+            file: file,
+            line: tokens.last().map(|tok| tok.line).unwrap_or(1),
+            col: tokens.last().map(|tok| tok.col).unwrap_or(1),
+            tt: Tt::TrailingWs,
+            lws: "",
+            tok: "",
         }
+    };
 
-        Ok((root, tws))
-    })?))
+    // we should have consumed all tokens here
+    if !p.is_done() {
+        return Err(p.unexpected());
+    }
+
+    Ok(Tree(root, tws))
 }
 
 
@@ -369,388 +384,464 @@ pub fn parse<'a>(
 
 // it's complicated, but this combined traversal impl means we only need to
 // actually navigate the tree structure once
-pub enum Spoon<'b, 'a> {
-    Expr(Expr<'b, 'a>),
+#[derive(Debug, Clone)]
+pub enum Fork<'a> {
+    Expr(Expr<'a>),
     Token(Token<'a>)
 }
 
-trait Pspoon<'b, 'a>: Sized {
-    fn _try_spoon<E>(
-        &self,
-        cb: &mut dyn FnMut(&Spoon<'b, 'a>) -> Result<(), E>
-    ) -> Result<(), E>;
-
-    fn _try_pspoon<E>(
-        &self,
-        o: &mut Pool<'b>,
-        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+trait TryFork<'a>: Sized {
+    fn try_fork<E>(
+        self,
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
     ) -> Result<Self, E>;
 }
 
-impl<'b, 'a> Pspoon<'b, 'a> for Token<'a> {
-    fn _try_spoon<E>(
-        &self,
-        cb: &mut dyn FnMut(&Spoon<'b, 'a>) -> Result<(), E>
-    ) -> Result<(), E> {
-        Ok(cb(&Spoon::Token(*self))?)
-    }
-
-    fn _try_pspoon<E>(
-        &self,
-        o: &mut Pool<'b>,
-        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+impl<'a> TryFork<'a> for Token<'a> {
+    fn try_fork<E>(
+        self,
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
     ) -> Result<Self, E> {
-        Ok(match cb(o, Spoon::Token(*self))? {
-            Spoon::Token(self_) => self_,
+        Ok(match cb(Fork::Token(self))? {
+            Fork::Token(self_) => self_,
             _ => unreachable!(),
         })
     }
 }
 
-impl<'b, 'a> Pspoon<'b, 'a> for Expr<'b, 'a> {
-    fn _try_spoon<E>(
-        &self,
-        cb: &mut dyn FnMut(&Spoon<'b, 'a>) -> Result<(), E>
-    ) -> Result<(), E> {
-        Ok(cb(&Spoon::Expr(*self))?)
-    }
-
-    fn _try_pspoon<E>(
-        &self,
-        o: &mut Pool<'b>,
-        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
+impl<'a> TryFork<'a> for Expr<'a> {
+    fn try_fork<E>(
+        self,
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
     ) -> Result<Self, E> {
-        Ok(match cb(o, Spoon::Expr(*self))? {
-            Spoon::Expr(self_) => self_,
+        Ok(match cb(Fork::Expr(self))? {
+            Fork::Expr(self_) => self_,
             _ => unreachable!(),
         })
     }
 }
 
-// fork impls
-impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for Expr<'_, 'a> {
-    type Pforked = Expr<'b, 'a>;
-
-    fn _try_pfork<E>(
+// core traversal trait
+pub trait Map<T>
+where
+    Self: Sized
+{
+    fn _try_map<E>(
         &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
-    ) -> Result<Self::Pforked, E> {
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(T) -> Result<T, E>
+    ) -> Result<Self, E>;
+
+    fn _map(
+        &self,
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(T) -> T
+    ) -> Self {
+        self._try_map(&mut |t| Ok::<_, ()>(cb(t))).unwrap()
+    }
+
+    fn _try_visit<E>(
+        &self,
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(&T) -> Result<(), E>
+    ) -> Result<(), E>
+    where
+        Self: Clone
+    {
+        self.clone()._try_map(&mut |t| cb(&t).map(|_| t))?;
+        Ok(())
+    }
+
+    fn _visit(
+        &self,
+        // recursion makes the compiler explode if f is generic!
+        cb: &mut dyn FnMut(&T)
+    )
+    where
+        Self: Clone
+    {
+        self.clone()._try_visit(&mut |t| Ok::<_, ()>(cb(t))).unwrap()
+    }
+
+    // convenience wrappers, but if recursion is used use the above or
+    // else Rust will barf when the compiler itself overflows
+    fn try_map<F, E>(&self, mut cb: F) -> Result<Self, E>
+    where
+        F: FnMut(T) -> Result<T, E>
+    {
+        self._try_map(&mut cb)
+    }
+
+    fn map<F>(&self, mut cb: F) -> Self
+    where
+        F: FnMut(T) -> T
+    {
+        self._map(&mut cb)
+    }
+    
+    fn try_visit<F, E>(&self, mut cb: F) -> Result<(), E>
+    where
+        F: FnMut(&T) -> Result<(), E>,
+        Self: Clone
+    {
+        self._try_visit(&mut cb)
+    }
+
+    fn visit<F>(&self, mut cb: F)
+    where
+        F: FnMut(&T),
+        Self: Clone
+    {
+        self._visit(&mut cb)
+    }
+}
+
+// traversal impls
+impl<'a> Map<Fork<'a>> for Token<'a> {
+    fn _try_map<E>(
+        &self,
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
+    ) -> Result<Self, E> {
+        Ok(match cb(Fork::Token(*self))? {
+            Fork::Token(self_) => self_,
+            _ => unreachable!(),
+        })
+    }
+}
+
+impl<'a> Map<Fork<'a>> for Expr<'a> {
+    fn _try_map<E>(
+        &self,
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
+    ) -> Result<Self, E> {
         // map bottom-up so we are always guaranteed to make progress
-        let expr = match *self {
-            Expr::Sym(tok) => Expr::Sym(tok._try_pspoon(o, cb)?),
-            Expr::Lit(tok) => Expr::Lit(tok._try_pspoon(o, cb)?),
+        let expr = match self {
+            Expr::Sym(tok) => Expr::Sym(tok._try_map(cb)?),
+            Expr::Lit(tok) => Expr::Lit(tok._try_map(cb)?),
             Expr::Decl(expr, tok) => Expr::Decl(
-                expr._try_pfork(o, cb)?.swim(o),
-                tok._try_pspoon(o, cb)?,
+                Rc::new(expr._try_map(cb)?),
+                tok._try_map(cb)?,
             ),
             Expr::Call(expr, l, list, r) => Expr::Call(
-                expr._try_pfork(o, cb)?.swim(o),
-                l._try_pspoon(o, cb)?,
-                list._try_pfork(o, cb)?.swim(o),
-                r._try_pspoon(o, cb)?,
+                Rc::new(expr._try_map(cb)?),
+                l._try_map(cb)?,
+                list._try_map(cb)?,
+                r._try_map(cb)?,
             ),
             Expr::Index(expr, l, list, r) => Expr::Index(
-                expr._try_pfork(o, cb)?.swim(o),
-                l._try_pspoon(o, cb)?,
-                list._try_pfork(o, cb)?.swim(o),
-                r._try_pspoon(o, cb)?,
+                Rc::new(expr._try_map(cb)?),
+                l._try_map(cb)?,
+                list._try_map(cb)?,
+                r._try_map(cb)?,
             ),
             Expr::Block(expr, l, list, r) => Expr::Block(
-                expr._try_pfork(o, cb)?.swim(o),
-                l._try_pspoon(o, cb)?,
-                list._try_pfork(o, cb)?.swim(o),
-                r._try_pspoon(o, cb)?,
+                Rc::new(expr._try_map(cb)?),
+                l._try_map(cb)?,
+                list._try_map(cb)?,
+                r._try_map(cb)?,
             ),
             Expr::Unary(tok, expr) => Expr::Unary(
-                tok._try_pspoon(o, cb)?,
-                expr._try_pfork(o, cb)?.swim(o),
+                tok._try_map(cb)?,
+                Rc::new(expr._try_map(cb)?),
             ),
             Expr::Suffnary(expr, tok) => Expr::Suffnary(
-                expr._try_pfork(o, cb)?.swim(o),
-                tok._try_pspoon(o, cb)?,
+                Rc::new(expr._try_map(cb)?),
+                tok._try_map(cb)?,
             ),
             Expr::Binary(lh, tok, rh) => Expr::Binary(
-                lh._try_pfork(o, cb)?.swim(o),
-                tok._try_pspoon(o, cb)?,
-                rh._try_pfork(o, cb)?.swim(o),
+                Rc::new(lh._try_map(cb)?),
+                tok._try_map(cb)?,
+                Rc::new(rh._try_map(cb)?),
             ),
             Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
-                lh._try_pfork(o, cb)?.swim(o),
-                l._try_pspoon(o, cb)?,
-                mh._try_pfork(o, cb)?.swim(o),
-                r._try_pspoon(o, cb)?,
-                rh._try_pfork(o, cb)?.swim(o),
+                Rc::new(lh._try_map(cb)?),
+                l._try_map(cb)?,
+                Rc::new(mh._try_map(cb)?),
+                r._try_map(cb)?,
+                Rc::new(rh._try_map(cb)?),
             ),
             Expr::Squiggle(l, list, r) => Expr::Squiggle(
-                l._try_pspoon(o, cb)?,
-                list._try_pfork(o, cb)?.swim(o),
-                r._try_pspoon(o, cb)?,
+                l._try_map(cb)?,
+                list._try_map(cb)?,
+                r._try_map(cb)?,
             ),
         };
 
-        expr._try_pspoon(o, cb)
+        Ok(match cb(Fork::Expr(expr))? {
+            Fork::Expr(self_) => self_,
+            _ => unreachable!(),
+        })
     }
 }
 
-impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for List<'_, 'a> {
-    type Pforked = Box<List<'b, 'a>>;
-
-    fn _try_pfork<E>(
+impl<'a> Map<Fork<'a>> for List<'a> {
+    fn _try_map<E>(
         &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
-    ) -> Result<Self::Pforked, E> {
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
+    ) -> Result<Self, E> {
         let mut list_ = vec![];
         for (expr, comma) in self.iter() {
             list_.push((
-                expr.map(|expr| expr._try_pfork(o, cb)).transpose()?,
-                comma.map(|comma| comma._try_pspoon(o, cb)).transpose()?
+                expr.clone().map(|expr| expr._try_map(cb)).transpose()?,
+                comma.map(|comma| comma._try_map(cb)).transpose()?
             ));
         }
-        Ok(list_.into_boxed_slice())
+        Ok(list_.into())
     }
 }
 
-impl<'b, 'a> Pfork<'b, Spoon<'b, 'a>> for Root<'_, 'a> {
-    type Pforked = Root<'b, 'a>;
-
-    fn _try_pfork<E>(
+impl<'a> Map<Fork<'a>> for Tree<'a> {
+    fn _try_map<E>(
         &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Spoon<'b, 'a>) -> Result<Spoon<'b, 'a>, E>
-    ) -> Result<Self::Pforked, E> {
-        Ok((
-            self.0._try_pfork(o, cb)?.swim(o),
-            self.1._try_pspoon(o, cb)?
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
+    ) -> Result<Self, E> {
+        Ok(Tree(
+            self.0._try_map(cb)?,
+            self.1._try_map(cb)?
         ))
     }
 }
 
 
-// now we can make these a bit prettier
-
-// token traversal
-impl<'b, 'a: 'b, T> Pfork<'b, Token<'a>> for T
+// now we can split the fork
+impl<'a, T> Map<Token<'a>> for T
 where
-    T: Pfork<'b, Spoon<'b, 'a>>
+    T: Map<Fork<'a>>
 {
-    type Pforked = T::Pforked;
-
-    fn _try_pfork<E>(
+    fn _try_map<E>(
         &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
-    ) -> Result<Self::Pforked, E> {
-        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
-            Ok(match spoon {
-                Spoon::Token(tok) => Spoon::Token(cb(o, tok)?),
-                spoon => spoon,
+        cb: &mut dyn FnMut(Token<'a>) -> Result<Token<'a>, E>
+    ) -> Result<Self, E> {
+        self._try_map(&mut |fork| {
+            Ok(match fork {
+                Fork::Token(tok) => Fork::Token(cb(tok)?),
+                fork => fork,
             })
         })
     }
 }
 
-impl<'a> Tree<'a> {
-    pub fn fork_tokens<'b, F>(&self, mut cb: F) -> Self
-    where
-        F: FnMut(&mut Pool<'b>, Token<'a>) -> Token<'a>,
-        'a: 'b
-    {
-        self.try_fork_tokens(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
-    }
-
-    pub fn try_fork_tokens<'b, F, E>(&self, cb: F) -> Result<Self, E>
-    where
-        F: FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>,
-        'a: 'b
-    {
-        let root = self.0.try_pfork(cb)?;
-        // I don't know why lifetime coercion in pfork only works _sometimes_,
-        // 'a is strictly >= 'b, so this should coerce? It works fine in
-        // from_fn. Oh well, all Rust problems can be solved with transmute
-        let root = unsafe { transmute::<Pooled<Root<'b, 'a>>, Pooled<Root<'a, 'a>>>(root) };
-        Ok(Tree(root))
-    }
-
-    // convenience wrappers
-    pub fn map_tokens<'b, F>(self, cb: F) -> Self
-    where
-        F: FnMut(&mut Pool<'b>, Token<'a>) -> Token<'a>,
-        'a: 'b
-    {
-        self.fork_tokens(cb)
-    }
-
-    pub fn try_map_tokens<'b, F, E>(self, cb: F) -> Result<Self, E>
-    where
-        F: FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>,
-        'a: 'b
-    {
-        self.try_fork_tokens(cb)
-    }
-
-    pub fn visit_tokens<F>(&self, cb: F)
-    where
-        F: FnMut(&Token<'a>)
-    {
-        self.0.pvisit(cb)
-    }
-
-    pub fn try_visit_tokens<F, E>(&self, cb: F) -> Result<(), E>
-    where
-        F: FnMut(&Token<'a>) -> Result<(), E>
-    {
-        self.0.try_pvisit(cb)
-    }
-}
-
-
-// expr traversal
-impl<'b, 'a: 'b, T> Pfork<'b, Expr<'b, 'a>> for T
+impl<'a, T> Map<Expr<'a>> for T
 where
-    T: Pfork<'b, Spoon<'b, 'a>>
+    T: Map<Fork<'a>>
 {
-    type Pforked = T::Pforked;
-
-    fn _try_pfork<E>(
+    fn _try_map<E>(
         &self,
-        o: &mut Pool<'b>,
-        // this recursion makes the compiler explode if generic!
-        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
-    ) -> Result<Self::Pforked, E> {
-        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
-            Ok(match spoon {
-                Spoon::Expr(tok) => Spoon::Expr(cb(o, tok)?),
-                spoon => spoon,
+        cb: &mut dyn FnMut(Expr<'a>) -> Result<Expr<'a>, E>
+    ) -> Result<Self, E> {
+        self._try_map(&mut |fork| {
+            Ok(match fork {
+                Fork::Expr(expr) => Fork::Expr(cb(expr)?),
+                fork => fork,
             })
         })
     }
 }
 
-impl<'a> Tree<'a> {
-    pub fn fork_exprs<'b, F>(&self, mut cb: F) -> Self
-    where
-        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Expr<'b, 'a>,
-        'a: 'b
-    {
-        self.try_fork_exprs(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
-    }
 
-    pub fn try_fork_exprs<'b, F, E>(&self, cb: F) -> Result<Self, E>
-    where
-        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>,
-        'a: 'b
-    {
-        let root = self.0.try_pfork(cb)?;
-        // I don't know why lifetime coercion in pfork only works _sometimes_,
-        // 'a is strictly >= 'b, so this should coerce? It works fine in
-        // from_fn. Oh well, all Rust problems can be solved with transmute
-        let root = unsafe { transmute::<Pooled<Root<'b, 'a>>, Pooled<Root<'a, 'a>>>(root) };
-        Ok(Tree(root))
-    }
-
-    // convenience wrappers
-    pub fn map_exprs<'b, F>(self, cb: F) -> Self
-    where
-        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Expr<'b, 'a>,
-        'a: 'b
-    {
-        self.fork_exprs(cb)
-    }
-
-    pub fn try_map_exprs<'b, F, E>(self, cb: F) -> Result<Self, E>
-    where
-        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>,
-        'a: 'b
-    {
-        self.try_fork_exprs(cb)
-    }
-
-    pub fn visit_exprs<'b, F>(&self, cb: F)
-    where
-        F: FnMut(&Expr<'b, 'a>),
-        'a: 'b
-    {
-        self.0.pvisit(cb)
-    }
-
-    pub fn try_visit_exprs<'b,  F, E>(&self, cb: F) -> Result<(), E>
-    where
-        F: FnMut(&Expr<'b, 'a>) -> Result<(), E>,
-        'a: 'b
-    {
-        self.0.try_pvisit(cb)
-    }
-}
+//// now we can make these a bit prettier
+//
+//// token traversal
+//impl<'a: 'b, T> Pfork<'b, Token<'a>> for T
+//where
+//    T: Pfork<'b, Spoon<'a>>
+//{
+//    type Pforked = T::Pforked;
+//
+//    fn _try_pfork<E>(
+//        &self,
+//        o: &mut Pool<'b>,
+//        // this recursion makes the compiler explode if generic!
+//        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
+//    ) -> Result<Self::Pforked, E> {
+//        self._try_pfork(o, &mut |o, spoon: Spoon<'a>| {
+//            Ok(match spoon {
+//                Spoon::Token(tok) => Spoon::Token(cb(o, tok)?),
+//                spoon => spoon,
+//            })
+//        })
+//    }
+//}
+//
+//impl<'a> Tree<'a> {
+//    pub fn fork_tokens<'b, F>(&self, mut cb: F) -> Self
+//    where
+//        F: FnMut(&mut Pool<'b>, Token<'a>) -> Token<'a>,
+//        'a: 'b
+//    {
+//        self.try_fork_tokens(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
+//    }
+//
+//    pub fn try_fork_tokens<'b, F, E>(&self, cb: F) -> Result<Self, E>
+//    where
+//        F: FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>,
+//        'a: 'b
+//    {
+//        let root = self.0.try_pfork(cb)?;
+//        // I don't know why lifetime coercion in pfork only works _sometimes_,
+//        // 'a is strictly >= 'b, so this should coerce? It works fine in
+//        // from_fn. Oh well, all Rust problems can be solved with transmute
+//        let root = unsafe { transmute::<Pooled<Root<'b, 'a>>, Pooled<Root<'a, 'a>>>(root) };
+//        Ok(Tree(root))
+//    }
+//
+//    // convenience wrappers
+//    pub fn map_tokens<'b, F>(self, cb: F) -> Self
+//    where
+//        F: FnMut(&mut Pool<'b>, Token<'a>) -> Token<'a>,
+//        'a: 'b
+//    {
+//        self.fork_tokens(cb)
+//    }
+//
+//    pub fn try_map_tokens<'b, F, E>(self, cb: F) -> Result<Self, E>
+//    where
+//        F: FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>,
+//        'a: 'b
+//    {
+//        self.try_fork_tokens(cb)
+//    }
+//
+//    pub fn visit_tokens<F>(&self, cb: F)
+//    where
+//        F: FnMut(&Token<'a>)
+//    {
+//        self.0.pvisit(cb)
+//    }
+//
+//    pub fn try_visit_tokens<F, E>(&self, cb: F) -> Result<(), E>
+//    where
+//        F: FnMut(&Token<'a>) -> Result<(), E>
+//    {
+//        self.0.try_pvisit(cb)
+//    }
+//}
+//
+//
+//// expr traversal
+//impl<'b, 'a: 'b, T> Pfork<'b, Expr<'b, 'a>> for T
+//where
+//    T: Pfork<'b, Spoon<'b, 'a>>
+//{
+//    type Pforked = T::Pforked;
+//
+//    fn _try_pfork<E>(
+//        &self,
+//        o: &mut Pool<'b>,
+//        // this recursion makes the compiler explode if generic!
+//        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
+//    ) -> Result<Self::Pforked, E> {
+//        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
+//            Ok(match spoon {
+//                Spoon::Expr(tok) => Spoon::Expr(cb(o, tok)?),
+//                spoon => spoon,
+//            })
+//        })
+//    }
+//}
+//
+//impl<'a> Tree<'a> {
+//    pub fn fork_exprs<'b, F>(&self, mut cb: F) -> Self
+//    where
+//        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Expr<'b, 'a>,
+//        'a: 'b
+//    {
+//        self.try_fork_exprs(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
+//    }
+//
+//    pub fn try_fork_exprs<'b, F, E>(&self, cb: F) -> Result<Self, E>
+//    where
+//        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>,
+//        'a: 'b
+//    {
+//        let root = self.0.try_pfork(cb)?;
+//        // I don't know why lifetime coercion in pfork only works _sometimes_,
+//        // 'a is strictly >= 'b, so this should coerce? It works fine in
+//        // from_fn. Oh well, all Rust problems can be solved with transmute
+//        let root = unsafe { transmute::<Pooled<Root<'b, 'a>>, Pooled<Root<'a, 'a>>>(root) };
+//        Ok(Tree(root))
+//    }
+//
+//    // convenience wrappers
+//    pub fn map_exprs<'b, F>(self, cb: F) -> Self
+//    where
+//        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Expr<'b, 'a>,
+//        'a: 'b
+//    {
+//        self.fork_exprs(cb)
+//    }
+//
+//    pub fn try_map_exprs<'b, F, E>(self, cb: F) -> Result<Self, E>
+//    where
+//        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>,
+//        'a: 'b
+//    {
+//        self.try_fork_exprs(cb)
+//    }
+//
+//    pub fn visit_exprs<'b, F>(&self, cb: F)
+//    where
+//        F: FnMut(&Expr<'b, 'a>),
+//        'a: 'b
+//    {
+//        self.0.pvisit(cb)
+//    }
+//
+//    pub fn try_visit_exprs<'b,  F, E>(&self, cb: F) -> Result<(), E>
+//    where
+//        F: FnMut(&Expr<'b, 'a>) -> Result<(), E>,
+//        'a: 'b
+//    {
+//        self.0.try_pvisit(cb)
+//    }
+//}
 
 
 
 //// utils ///
 
-use std::path::Path;
-
 // whitespace stuff
-impl<'b, 'a> Expr<'b, 'a> {
+impl<'a> Expr<'a> {
     pub fn file(&self) -> &'a Path {
-        self.try_pvisit(|tok: &Token<'a>| Err(tok.file)).unwrap_err()
+        self.try_visit(|tok: &Token<'a>| Err(tok.file)).unwrap_err()
     }
 
     pub fn line(&self) -> usize {
-        self.try_pvisit(|tok: &Token<'a>| Err(tok.line)).unwrap_err()
+        self.try_visit(|tok: &Token<'a>| Err(tok.line)).unwrap_err()
     }
 
     pub fn col(&self) -> usize {
-        self.try_pvisit(|tok: &Token<'a>| Err(tok.col)).unwrap_err()
+        self.try_visit(|tok: &Token<'a>| Err(tok.col)).unwrap_err()
     }
 
     pub fn lws(&self) -> &'a str {
-        self.try_pvisit(|tok: &Token<'a>| Err(tok.lws)).unwrap_err()
+        self.try_visit(|tok: &Token<'a>| Err(tok.lws)).unwrap_err()
     }
 
-    pub fn file_(self, o: &mut Pool<'b>, file: &'a Path) -> Self {
-        let mut first = true;
-        self.pmap(o, |_, tok: Token<'a>| {
-            let tok = if first { tok.file_(file) } else { tok };
-            first = false;
-            tok
-        })
+    pub fn file_(&self, file: &'a Path) -> Self {
+        self.map(|tok: Token<'a>| tok.file_(file))
     }
 
-    pub fn line_(self, o: &mut Pool<'b>, line: usize) -> Self {
-        let mut first = true;
-        self.pmap(o, |_, tok: Token<'a>| {
-            let tok = if first { tok.line_(line) } else { tok };
-            first = false;
-            tok
-        })
+    pub fn line_(self, line: usize) -> Self {
+        self.map(|tok: Token<'a>| tok.line_(line))
     }
 
-    pub fn col_(self, o: &mut Pool<'b>, col: usize) -> Self {
-        let mut first = true;
-        self.pmap(o, |_, tok: Token<'a>| {
-            let tok = if first { tok.col_(col) } else { tok };
-            first = false;
-            tok
-        })
+    pub fn col_(self, col: usize) -> Self {
+        self.map(|tok: Token<'a>| tok.col_(col))
     }
 
-    pub fn lws_(self, o: &mut Pool<'b>, lws: &'a str) -> Self {
+    pub fn lws_(self, lws: &'a str) -> Self {
         let mut first = true;
-        self.pmap(o, |_, tok: Token<'a>| {
+        self.map(|tok: Token<'a>| {
             let tok = if first { tok.lws_(lws) } else { tok };
             first = false;
             tok
         })
     }
 
-    pub fn indent(self, o: &mut Pool<'b>, n: usize) -> Self {
+    pub fn indent(self, n: usize) -> Self {
         let mut first = true;
-        self.pmap(o, |_, tok: Token<'a>| {
+        self.map(|tok: Token<'a>| {
             let tok = if first { tok.indent(n) } else { tok };
             first = false;
             tok
@@ -763,20 +854,17 @@ impl<'b, 'a> Expr<'b, 'a> {
 use crate::tokenizer::tok;
 use std::borrow::Borrow;
 
-pub fn sym<'a, S: Into<Cow<'a, str>>>(s: S) -> Expr<'a, 'a> {
+pub fn sym<'a, S: Into<Cow<'a, str>>>(s: S) -> Expr<'a> {
     Expr::Sym(tok(s))
 }
 
 // a span is sort of an invisible squiggle, usually for injecting multiple
 // exprs into a single expr
-pub fn span<'b, 'a, E: Borrow<Expr<'b, 'a>>>(
-    o: &mut Pool<'b>,
-    list: &[E]
-) -> Expr<'b, 'a> {
+pub fn span<'a, E: Borrow<Expr<'a>>>(list: &[Expr<'a>]) -> Expr<'a> {
     let mut list_ = vec![];
     for (i, expr) in list.iter().enumerate() {
         list_.push((
-            Some(expr.borrow().clone()),
+            Some(expr.clone()),
             if i < list.len()-1 {
                 Some(tok(";"))
             } else {
@@ -787,7 +875,7 @@ pub fn span<'b, 'a, E: Borrow<Expr<'b, 'a>>>(
 
     Expr::Squiggle(
         tok(""),
-        list_.swim(o),
+        list_.into(),
         tok(""),
     )
 }
