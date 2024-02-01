@@ -1,9 +1,5 @@
 
-use either::{Either, Left, Right};
-
 use std::borrow::Cow;
-use std::mem::transmute;
-use std::cell::RefCell;
 use std::path::Path;
 
 use crate::tokenizer::Token;
@@ -11,6 +7,7 @@ use crate::tokenizer::Tt;
 use crate::errors::ParseError;
 use crate::rc::Rc;
 use crate::rc::Transmute;
+use crate::rc::Transborrow;
 
 
 // tree stuff
@@ -54,9 +51,9 @@ type List_<'b, 'a> = &'b [(Option<Expr_<'b, 'a>>, Option<Token<'a>>)];
 #[derive(Debug, Clone, Copy)]
 pub struct Tree_<'b, 'a>(List_<'b, 'a>, Token<'a>);
 
-unsafe impl<'b, 'a> Transmute<'b, Expr_<'b, 'a>> for Expr<'a> {}
-unsafe impl<'b, 'a> Transmute<'b, List_<'b, 'a>> for Expr<'a> {}
-unsafe impl<'b, 'a> Transmute<'b, Tree_<'b, 'a>> for Tree<'a> {}
+unsafe impl<'b, 'a> Transmute<Expr_<'b, 'a>> for Expr<'a> {}
+unsafe impl<'b, 'a> Transmute<List_<'b, 'a>> for List<'a> {}
+unsafe impl<'b, 'a> Transmute<Tree_<'b, 'a>> for Tree<'a> {}
 
 
 // helper for pattern matching
@@ -387,38 +384,7 @@ pub fn parse<'a>(
 #[derive(Debug, Clone)]
 pub enum Fork<'a> {
     Expr(Expr<'a>),
-    Token(Token<'a>)
-}
-
-trait TryFork<'a>: Sized {
-    fn try_fork<E>(
-        self,
-        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
-    ) -> Result<Self, E>;
-}
-
-impl<'a> TryFork<'a> for Token<'a> {
-    fn try_fork<E>(
-        self,
-        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
-    ) -> Result<Self, E> {
-        Ok(match cb(Fork::Token(self))? {
-            Fork::Token(self_) => self_,
-            _ => unreachable!(),
-        })
-    }
-}
-
-impl<'a> TryFork<'a> for Expr<'a> {
-    fn try_fork<E>(
-        self,
-        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
-    ) -> Result<Self, E> {
-        Ok(match cb(Fork::Expr(self))? {
-            Fork::Expr(self_) => self_,
-            _ => unreachable!(),
-        })
-    }
+    Token(Token<'a>),
 }
 
 // core traversal trait
@@ -426,17 +392,19 @@ pub trait Map<T>
 where
     Self: Sized
 {
+    type Target;
+
     fn _try_map<E>(
         &self,
         // recursion makes the compiler explode if f is generic!
         cb: &mut dyn FnMut(T) -> Result<T, E>
-    ) -> Result<Self, E>;
+    ) -> Result<Self::Target, E>;
 
     fn _map(
         &self,
         // recursion makes the compiler explode if f is generic!
         cb: &mut dyn FnMut(T) -> T
-    ) -> Self {
+    ) -> Self::Target {
         self._try_map(&mut |t| Ok::<_, ()>(cb(t))).unwrap()
     }
 
@@ -465,14 +433,14 @@ where
 
     // convenience wrappers, but if recursion is used use the above or
     // else Rust will barf when the compiler itself overflows
-    fn try_map<F, E>(&self, mut cb: F) -> Result<Self, E>
+    fn try_map<F, E>(&self, mut cb: F) -> Result<Self::Target, E>
     where
         F: FnMut(T) -> Result<T, E>
     {
         self._try_map(&mut cb)
     }
 
-    fn map<F>(&self, mut cb: F) -> Self
+    fn map<F>(&self, mut cb: F) -> Self::Target
     where
         F: FnMut(T) -> T
     {
@@ -498,10 +466,12 @@ where
 
 // traversal impls
 impl<'a> Map<Fork<'a>> for Token<'a> {
+    type Target = Token<'a>;
+
     fn _try_map<E>(
         &self,
         cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
-    ) -> Result<Self, E> {
+    ) -> Result<Self::Target, E> {
         Ok(match cb(Fork::Token(*self))? {
             Fork::Token(self_) => self_,
             _ => unreachable!(),
@@ -509,58 +479,60 @@ impl<'a> Map<Fork<'a>> for Token<'a> {
     }
 }
 
-impl<'a> Map<Fork<'a>> for Expr<'a> {
+impl<'b, 'a> Map<Fork<'a>> for Expr_<'b, 'a> {
+    type Target = Expr<'a>;
+
     fn _try_map<E>(
         &self,
         cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
-    ) -> Result<Self, E> {
+    ) -> Result<Self::Target, E> {
         // map bottom-up so we are always guaranteed to make progress
         let expr = match self {
-            Expr::Sym(tok) => Expr::Sym(tok._try_map(cb)?),
-            Expr::Lit(tok) => Expr::Lit(tok._try_map(cb)?),
-            Expr::Decl(expr, tok) => Expr::Decl(
+            Expr_::Sym(tok) => Expr::Sym(tok._try_map(cb)?),
+            Expr_::Lit(tok) => Expr::Lit(tok._try_map(cb)?),
+            Expr_::Decl(expr, tok) => Expr::Decl(
                 Rc::new(expr._try_map(cb)?),
                 tok._try_map(cb)?,
             ),
-            Expr::Call(expr, l, list, r) => Expr::Call(
+            Expr_::Call(expr, l, list, r) => Expr::Call(
                 Rc::new(expr._try_map(cb)?),
                 l._try_map(cb)?,
                 list._try_map(cb)?,
                 r._try_map(cb)?,
             ),
-            Expr::Index(expr, l, list, r) => Expr::Index(
+            Expr_::Index(expr, l, list, r) => Expr::Index(
                 Rc::new(expr._try_map(cb)?),
                 l._try_map(cb)?,
                 list._try_map(cb)?,
                 r._try_map(cb)?,
             ),
-            Expr::Block(expr, l, list, r) => Expr::Block(
+            Expr_::Block(expr, l, list, r) => Expr::Block(
                 Rc::new(expr._try_map(cb)?),
                 l._try_map(cb)?,
                 list._try_map(cb)?,
                 r._try_map(cb)?,
             ),
-            Expr::Unary(tok, expr) => Expr::Unary(
+            Expr_::Unary(tok, expr) => Expr::Unary(
                 tok._try_map(cb)?,
                 Rc::new(expr._try_map(cb)?),
             ),
-            Expr::Suffnary(expr, tok) => Expr::Suffnary(
+            Expr_::Suffnary(expr, tok) => Expr::Suffnary(
                 Rc::new(expr._try_map(cb)?),
                 tok._try_map(cb)?,
             ),
-            Expr::Binary(lh, tok, rh) => Expr::Binary(
+            Expr_::Binary(lh, tok, rh) => Expr::Binary(
                 Rc::new(lh._try_map(cb)?),
                 tok._try_map(cb)?,
                 Rc::new(rh._try_map(cb)?),
             ),
-            Expr::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
+            Expr_::Ternary(lh, l, mh, r, rh) => Expr::Ternary(
                 Rc::new(lh._try_map(cb)?),
                 l._try_map(cb)?,
                 Rc::new(mh._try_map(cb)?),
                 r._try_map(cb)?,
                 Rc::new(rh._try_map(cb)?),
             ),
-            Expr::Squiggle(l, list, r) => Expr::Squiggle(
+            Expr_::Squiggle(l, list, r) => Expr::Squiggle(
                 l._try_map(cb)?,
                 list._try_map(cb)?,
                 r._try_map(cb)?,
@@ -574,11 +546,13 @@ impl<'a> Map<Fork<'a>> for Expr<'a> {
     }
 }
 
-impl<'a> Map<Fork<'a>> for List<'a> {
+impl<'b, 'a> Map<Fork<'a>> for List_<'b, 'a> {
+    type Target = List<'a>;
+
     fn _try_map<E>(
         &self,
         cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
-    ) -> Result<Self, E> {
+    ) -> Result<Self::Target, E> {
         let mut list_ = vec![];
         for (expr, comma) in self.iter() {
             list_.push((
@@ -590,11 +564,13 @@ impl<'a> Map<Fork<'a>> for List<'a> {
     }
 }
 
-impl<'a> Map<Fork<'a>> for Tree<'a> {
+impl<'b, 'a> Map<Fork<'a>> for Tree_<'b, 'a> {
+    type Target = Tree<'a>;
+
     fn _try_map<E>(
         &self,
         cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
-    ) -> Result<Self, E> {
+    ) -> Result<Self::Target, E> {
         Ok(Tree(
             self.0._try_map(cb)?,
             self.1._try_map(cb)?
@@ -602,16 +578,17 @@ impl<'a> Map<Fork<'a>> for Tree<'a> {
     }
 }
 
-
 // now we can split the fork
 impl<'a, T> Map<Token<'a>> for T
 where
     T: Map<Fork<'a>>
 {
+    type Target = <T as Map<Fork<'a>>>::Target;
+
     fn _try_map<E>(
         &self,
         cb: &mut dyn FnMut(Token<'a>) -> Result<Token<'a>, E>
-    ) -> Result<Self, E> {
+    ) -> Result<Self::Target, E> {
         self._try_map(&mut |fork| {
             Ok(match fork {
                 Fork::Token(tok) => Fork::Token(cb(tok)?),
@@ -625,10 +602,12 @@ impl<'a, T> Map<Expr<'a>> for T
 where
     T: Map<Fork<'a>>
 {
+    type Target = <T as Map<Fork<'a>>>::Target;
+
     fn _try_map<E>(
         &self,
         cb: &mut dyn FnMut(Expr<'a>) -> Result<Expr<'a>, E>
-    ) -> Result<Self, E> {
+    ) -> Result<Self::Target, E> {
         self._try_map(&mut |fork| {
             Ok(match fork {
                 Fork::Expr(expr) => Fork::Expr(cb(expr)?),
@@ -638,170 +617,85 @@ where
     }
 }
 
+// extend to tracking types
+impl<'a> Map<Fork<'a>> for Expr<'a> {
+    type Target = Expr<'a>;
 
-//// now we can make these a bit prettier
-//
-//// token traversal
-//impl<'a: 'b, T> Pfork<'b, Token<'a>> for T
-//where
-//    T: Pfork<'b, Spoon<'a>>
-//{
-//    type Pforked = T::Pforked;
-//
-//    fn _try_pfork<E>(
-//        &self,
-//        o: &mut Pool<'b>,
-//        // this recursion makes the compiler explode if generic!
-//        cb: &mut dyn FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>
-//    ) -> Result<Self::Pforked, E> {
-//        self._try_pfork(o, &mut |o, spoon: Spoon<'a>| {
-//            Ok(match spoon {
-//                Spoon::Token(tok) => Spoon::Token(cb(o, tok)?),
-//                spoon => spoon,
-//            })
-//        })
-//    }
-//}
-//
-//impl<'a> Tree<'a> {
-//    pub fn fork_tokens<'b, F>(&self, mut cb: F) -> Self
-//    where
-//        F: FnMut(&mut Pool<'b>, Token<'a>) -> Token<'a>,
-//        'a: 'b
-//    {
-//        self.try_fork_tokens(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
-//    }
-//
-//    pub fn try_fork_tokens<'b, F, E>(&self, cb: F) -> Result<Self, E>
-//    where
-//        F: FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>,
-//        'a: 'b
-//    {
-//        let root = self.0.try_pfork(cb)?;
-//        // I don't know why lifetime coercion in pfork only works _sometimes_,
-//        // 'a is strictly >= 'b, so this should coerce? It works fine in
-//        // from_fn. Oh well, all Rust problems can be solved with transmute
-//        let root = unsafe { transmute::<Pooled<Root<'b, 'a>>, Pooled<Root<'a, 'a>>>(root) };
-//        Ok(Tree(root))
-//    }
-//
-//    // convenience wrappers
-//    pub fn map_tokens<'b, F>(self, cb: F) -> Self
-//    where
-//        F: FnMut(&mut Pool<'b>, Token<'a>) -> Token<'a>,
-//        'a: 'b
-//    {
-//        self.fork_tokens(cb)
-//    }
-//
-//    pub fn try_map_tokens<'b, F, E>(self, cb: F) -> Result<Self, E>
-//    where
-//        F: FnMut(&mut Pool<'b>, Token<'a>) -> Result<Token<'a>, E>,
-//        'a: 'b
-//    {
-//        self.try_fork_tokens(cb)
-//    }
-//
-//    pub fn visit_tokens<F>(&self, cb: F)
-//    where
-//        F: FnMut(&Token<'a>)
-//    {
-//        self.0.pvisit(cb)
-//    }
-//
-//    pub fn try_visit_tokens<F, E>(&self, cb: F) -> Result<(), E>
-//    where
-//        F: FnMut(&Token<'a>) -> Result<(), E>
-//    {
-//        self.0.try_pvisit(cb)
-//    }
-//}
-//
-//
-//// expr traversal
-//impl<'b, 'a: 'b, T> Pfork<'b, Expr<'b, 'a>> for T
-//where
-//    T: Pfork<'b, Spoon<'b, 'a>>
-//{
-//    type Pforked = T::Pforked;
-//
-//    fn _try_pfork<E>(
-//        &self,
-//        o: &mut Pool<'b>,
-//        // this recursion makes the compiler explode if generic!
-//        cb: &mut dyn FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>
-//    ) -> Result<Self::Pforked, E> {
-//        self._try_pfork(o, &mut |o, spoon: Spoon<'b, 'a>| {
-//            Ok(match spoon {
-//                Spoon::Expr(tok) => Spoon::Expr(cb(o, tok)?),
-//                spoon => spoon,
-//            })
-//        })
-//    }
-//}
-//
-//impl<'a> Tree<'a> {
-//    pub fn fork_exprs<'b, F>(&self, mut cb: F) -> Self
-//    where
-//        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Expr<'b, 'a>,
-//        'a: 'b
-//    {
-//        self.try_fork_exprs(|o, t| Ok::<_, ()>(cb(o, t))).unwrap()
-//    }
-//
-//    pub fn try_fork_exprs<'b, F, E>(&self, cb: F) -> Result<Self, E>
-//    where
-//        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>,
-//        'a: 'b
-//    {
-//        let root = self.0.try_pfork(cb)?;
-//        // I don't know why lifetime coercion in pfork only works _sometimes_,
-//        // 'a is strictly >= 'b, so this should coerce? It works fine in
-//        // from_fn. Oh well, all Rust problems can be solved with transmute
-//        let root = unsafe { transmute::<Pooled<Root<'b, 'a>>, Pooled<Root<'a, 'a>>>(root) };
-//        Ok(Tree(root))
-//    }
-//
-//    // convenience wrappers
-//    pub fn map_exprs<'b, F>(self, cb: F) -> Self
-//    where
-//        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Expr<'b, 'a>,
-//        'a: 'b
-//    {
-//        self.fork_exprs(cb)
-//    }
-//
-//    pub fn try_map_exprs<'b, F, E>(self, cb: F) -> Result<Self, E>
-//    where
-//        F: FnMut(&mut Pool<'b>, Expr<'b, 'a>) -> Result<Expr<'b, 'a>, E>,
-//        'a: 'b
-//    {
-//        self.try_fork_exprs(cb)
-//    }
-//
-//    pub fn visit_exprs<'b, F>(&self, cb: F)
-//    where
-//        F: FnMut(&Expr<'b, 'a>),
-//        'a: 'b
-//    {
-//        self.0.pvisit(cb)
-//    }
-//
-//    pub fn try_visit_exprs<'b,  F, E>(&self, cb: F) -> Result<(), E>
-//    where
-//        F: FnMut(&Expr<'b, 'a>) -> Result<(), E>,
-//        'a: 'b
-//    {
-//        self.0.try_pvisit(cb)
-//    }
-//}
+    fn _try_map<E>(
+        &self,
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
+    ) -> Result<Self::Target, E> {
+        let self_: &Expr_<'_, 'a> = self.borrow();
+        self_._try_map(cb)
+    }
+}
 
+impl<'a> Map<Fork<'a>> for List<'a> {
+    type Target = List<'a>;
+
+    fn _try_map<E>(
+        &self,
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
+    ) -> Result<Self::Target, E> {
+        let self_: &List_<'_, 'a> = self.borrow();
+        self_._try_map(cb)
+    }
+}
+
+impl<'a> Map<Fork<'a>> for Tree<'a> {
+    type Target = Tree<'a>;
+
+    fn _try_map<E>(
+        &self,
+        cb: &mut dyn FnMut(Fork<'a>) -> Result<Fork<'a>, E>
+    ) -> Result<Self::Target, E> {
+        let self_: &Tree_<'_, 'a> = self.borrow();
+        self_._try_map(cb)
+    }
+}
+
+// from impls, thought these risks being a bit expensive
+impl<'b, 'a> From<Expr_<'b, 'a>> for Expr<'a> {
+    fn from(self_: Expr_<'b, 'a>) -> Self {
+        self_.map(|t: Token<'a>| t)
+    }
+}
+
+impl<'b, 'a> From<List_<'b, 'a>> for List<'a> {
+    fn from(self_: List_<'b, 'a>) -> Self {
+        self_.map(|t: Token<'a>| t)
+    }
+}
+
+impl<'b, 'a> From<Tree_<'b, 'a>> for Tree<'a> {
+    fn from(self_: Tree_<'b, 'a>) -> Self {
+        self_.map(|t: Token<'a>| t)
+    }
+}
+
+impl<'b, 'a> From<&Expr_<'b, 'a>> for Expr<'a> {
+    fn from(self_: &Expr_<'b, 'a>) -> Self {
+        self_.map(|t: Token<'a>| t)
+    }
+}
+
+impl<'b, 'a> From<&List_<'b, 'a>> for List<'a> {
+    fn from(self_: &List_<'b, 'a>) -> Self {
+        self_.map(|t: Token<'a>| t)
+    }
+}
+
+impl<'b, 'a> From<&Tree_<'b, 'a>> for Tree<'a> {
+    fn from(self_: &Tree_<'b, 'a>) -> Self {
+        self_.map(|t: Token<'a>| t)
+    }
+}
 
 
 //// utils ///
 
 // whitespace stuff
-impl<'a> Expr<'a> {
+impl<'b, 'a> Expr_<'b, 'a> {
     pub fn file(&self) -> &'a Path {
         self.try_visit(|tok: &Token<'a>| Err(tok.file)).unwrap_err()
     }
@@ -816,6 +710,24 @@ impl<'a> Expr<'a> {
 
     pub fn lws(&self) -> &'a str {
         self.try_visit(|tok: &Token<'a>| Err(tok.lws)).unwrap_err()
+    }
+}
+
+impl<'a> Expr<'a> {
+    pub fn file(&self) -> &'a Path {
+        self.borrow().file()
+    }
+
+    pub fn line(&self) -> usize {
+        self.borrow().line()
+    }
+
+    pub fn col(&self) -> usize {
+        self.borrow().col()
+    }
+
+    pub fn lws(&self) -> &'a str {
+        self.borrow().lws()
     }
 
     pub fn file_(&self, file: &'a Path) -> Self {
@@ -852,7 +764,6 @@ impl<'a> Expr<'a> {
 
 // extra utils, just to make tree creation easy
 use crate::tokenizer::tok;
-use std::borrow::Borrow;
 
 pub fn sym<'a, S: Into<Cow<'a, str>>>(s: S) -> Expr<'a> {
     Expr::Sym(tok(s))
@@ -860,7 +771,8 @@ pub fn sym<'a, S: Into<Cow<'a, str>>>(s: S) -> Expr<'a> {
 
 // a span is sort of an invisible squiggle, usually for injecting multiple
 // exprs into a single expr
-pub fn span<'a, E: Borrow<Expr<'a>>>(list: &[Expr<'a>]) -> Expr<'a> {
+pub fn span<'a, L: AsRef<[Expr<'a>]>>(list: L) -> Expr<'a> {
+    let list = list.as_ref();
     let mut list_ = vec![];
     for (i, expr) in list.iter().enumerate() {
         list_.push((

@@ -8,6 +8,9 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::mem::ManuallyDrop;
+use std::mem::size_of;
+use std::mem::align_of;
+use std::mem::size_of_val;
 
 // global collection of refcounts
 thread_local! {
@@ -25,7 +28,7 @@ pub struct Rc<T: ?Sized> {
 impl<T: ?Sized> From<Box<T>> for Rc<T> {
     fn from(box_: Box<T>) -> Self {
         let ptr = NonNull::from(Box::leak(box_));
-        if std::mem::size_of_val::<T>(unsafe { ptr.as_ref() }) > 0 {
+        if size_of_val::<T>(unsafe { ptr.as_ref() }) > 0 {
             MAP.with(|map| {
                 match map.borrow_mut().insert(ptr.as_ptr() as *const (), 1) {
                     Some(_) => unreachable!(),
@@ -46,7 +49,7 @@ impl<T> Rc<T> {
 
 impl<T: ?Sized> Clone for Rc<T> {
     fn clone(&self) -> Self {
-        if std::mem::size_of_val::<T>(unsafe { self.ptr.as_ref() }) > 0 {
+        if size_of_val::<T>(unsafe { self.ptr.as_ref() }) > 0 {
             MAP.with(|map| {
                 match map.borrow_mut().entry(self.ptr.as_ptr() as *const ()) {
                     Entry::Occupied(mut entry) => {
@@ -65,7 +68,7 @@ impl<T: ?Sized> Clone for Rc<T> {
 
 impl<T: ?Sized> Drop for Rc<T> {
     fn drop(&mut self) {
-        let zero = if std::mem::size_of_val::<T>(unsafe { self.ptr.as_ref() }) > 0 {
+        let zero = if size_of_val::<T>(unsafe { self.ptr.as_ref() }) > 0 {
             MAP.with(|map| {
                 match map.borrow_mut().entry(self.ptr.as_ptr() as *const ()) {
                     Entry::Occupied(mut entry) => {
@@ -94,7 +97,7 @@ impl<T: ?Sized> Drop for Rc<T> {
 
 impl<T: Clone> Rc<T> {
     pub fn try_unwrap(self) -> Result<T, Rc<T>> {
-        let zero = if std::mem::size_of_val::<T>(unsafe { self.ptr.as_ref() }) > 0 {
+        let zero = if size_of_val::<T>(unsafe { self.ptr.as_ref() }) > 0 {
             MAP.with(|map| {
                 match map.borrow_mut().entry(self.ptr.as_ptr() as *const ()) {
                     Entry::Occupied(entry) => {
@@ -188,7 +191,12 @@ impl<T: ?Sized + std::fmt::Debug> std::fmt::Debug for Rc<T> {
     ) -> Result<(), std::fmt::Error> {
         std::fmt::Debug::fmt(self.as_ref(), f)
     }
+}
 
+impl<T: ?Sized + Default> Default for Rc<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
 }
 
 // other casts
@@ -198,12 +206,49 @@ impl<T> From<Vec<T>> for Rc<[T]> {
     }
 }
 
-// a marker trait for transmutation
-pub unsafe trait Transmute<'a, T> {
-    fn transmute(&'a self) -> &'a T {
-        unsafe { &*(self as *const Self as *const T) }
+impl<T> From<&[T]> for Rc<[T]>
+where
+    T: Clone
+{
+    fn from(v: &[T]) -> Self {
+        Self::from(Vec::from(v))
     }
 }
 
-unsafe impl<'a, T: ?Sized> Transmute<'a, &'a T> for Rc<T> {}
+
+// a marker trait for transmutation
+pub unsafe trait Transmute<T>
+where
+    Self: Sized
+{
+    fn transmute(self) -> T {
+        debug_assert!(size_of::<Self>() == size_of::<T>());
+        debug_assert!(align_of::<Self>() == align_of::<T>());
+        unsafe {
+            std::ptr::read(
+                &ManuallyDrop::new(self)
+                    as *const ManuallyDrop<Self>
+                    as *const T
+            )
+        }
+    }
+}
+
+unsafe impl<'a, T> Transmute<&'a T> for Rc<T> {}
+
+// basically a better borrow trait
+pub trait Transborrow<'a, T> {
+    fn borrow(&'a self) -> T;
+}
+
+impl<'a, S, T> Transborrow<'a, &'a T> for S
+where
+    S: Transmute<T>
+{
+    fn borrow(&'a self) -> &'a T {
+        debug_assert!(size_of::<Self>() == size_of::<T>());
+        debug_assert!(align_of::<Self>() == align_of::<T>());
+        unsafe { &*(self as *const Self as *const T) }
+    }
+}
 
