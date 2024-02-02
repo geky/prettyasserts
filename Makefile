@@ -5,9 +5,9 @@ CARGO ?= RUSTFLAGS="$(RUSTFLAGS)" cargo
 .PHONY: all build
 all build:
 	$(CARGO) build
-	cp target/debug/c-tree-edit ./c-tree-edit
+	cp target/debug/qadte ./qadte
 
 .PHONY: clean
 clean:
 	$(CARGO) clean
-	rm -f ./c-tree-edit
+	rm -f ./qadte

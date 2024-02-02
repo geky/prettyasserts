@@ -30,7 +30,10 @@ use edit::edit;
 
 // CLI arguments
 #[derive(Debug, StructOpt)]
-#[structopt(rename_all="kebab")]
+#[structopt(
+    about="A quick and dirty tree editor",
+    rename_all="kebab",
+)]
 struct Opt {
     input: PathBuf,
 
