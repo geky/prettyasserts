@@ -5,17 +5,16 @@ use std::alloc::Layout;
 use std::cell::Cell;
 use std::cmp::max;
 use std::mem::ManuallyDrop;
+use std::mem::MaybeUninit;
 use std::mem::size_of;
 use std::mem::align_of;
 use std::mem::transmute;
 
-struct RcBoxHeader<T: ?Sized> {
+struct RcHeader<T: ?Sized> {
     rc: Cell<usize>,
     // we need this to preserve metadata for zero-sized types
-    ptr: Option<NonNull<RcBox<T>>>,
+    ptr: NonNull<T>,
 }
-
-struct RcBox<T: ?Sized>(RcBoxHeader<T>, T);
 
 // A transmutable Rc type
 #[repr(transparent)]
@@ -24,64 +23,99 @@ pub struct Rc<T: ?Sized> {
     phantom: PhantomData<T>,
 }
 
-impl<T: ?Sized> RcBoxHeader<T> {
-    fn new() -> Self {
-        RcBoxHeader{rc: Cell::new(1), ptr: None}
+impl<T: ?Sized> RcHeader<T> {
+    fn new(ptr: NonNull<T>) -> Self {
+        RcHeader{rc: Cell::new(1), ptr: ptr}
     }
 
     fn layout(t: &T) -> Layout {
-        Layout::new::<RcBoxHeader<T>>()
+        Layout::new::<RcHeader<T>>()
             .extend(Layout::for_value(t))
             .unwrap()
             .0
     }
 
     fn offset(t: &T) -> usize {
-        Layout::new::<RcBoxHeader<T>>()
+        Layout::new::<RcHeader<T>>()
             .extend(Layout::for_value(t))
             .unwrap()
             .1
     }
-}
 
-impl<T: ?Sized> Rc<T> {
-    fn rcbox(&self) -> &RcBox<T> {
+    unsafe fn header(t: &T) -> &RcHeader<T> {
+        ((t as *const T as *const u8)
+            .sub(RcHeader::offset(t))
+            as *const RcHeader<T>)
+            .as_ref().unwrap()
+    }
+
+    fn alloc<'a, 'b>(t: &T) -> &'a mut MaybeUninit<T>
+    where
+        T: Sized
+    {
         unsafe {
-            ((self.ptr.as_ptr() as *const u8).sub(
-                RcBoxHeader::offset(self.ptr.as_ref())
-            ) as *const RcBoxHeader<T>)
-                .as_ref().unwrap()
-                .ptr.unwrap().as_ref()
+            let raw = std::alloc::alloc(RcHeader::layout(t));
+            let header = raw as *mut RcHeader<T>;
+            let data = raw.add(RcHeader::offset(t)) as *mut T;
+
+            header.write(RcHeader::new(NonNull::new(data).unwrap()));
+            &mut *(data as *mut MaybeUninit<T>)
         }
     }
 
-    fn rc(&self) -> &Cell<usize> {
-        &self.rcbox().0.rc
+    fn alloc_array<'a, 'b>(ts: &'a [ManuallyDrop<T>]) -> &'b mut [MaybeUninit<T>]
+    where
+        T: Sized
+    {
+        unsafe {
+            let raw = std::alloc::alloc(RcHeader::layout(ts));
+            let header = raw as *mut RcHeader<[T]>;
+            let data = std::slice::from_raw_parts_mut(
+                raw.add(RcHeader::offset(ts)) as *mut T,
+                ts.len()
+            ) as *mut [T];
+
+            header.write(RcHeader::new(NonNull::new(data).unwrap()));
+            &mut *(data as *mut [MaybeUninit<T>])
+        }
     }
 
-    fn from_rcbox(mut rcbox: Box<RcBox<T>>) -> Self {
-        rcbox.0.rc = Cell::new(1);
-        rcbox.0.ptr = Some(NonNull::from(rcbox.as_ref()));
-        let ptr = NonNull::from(&Box::leak(rcbox).1);
-        Rc{ptr: ptr, phantom: PhantomData}
+    unsafe fn dealloc(t: &mut ManuallyDrop<T>) {
+        std::alloc::dealloc(
+            RcHeader::header(t)
+                as *const RcHeader<ManuallyDrop<T>>
+                as *mut u8,
+            RcHeader::layout(t)
+        );
+    }
+}
+
+impl<T: ?Sized> Rc<T> {
+    fn header(&self) -> &RcHeader<T> {
+        unsafe { RcHeader::header(self.ptr.as_ref()) }
     }
 
-    unsafe fn into_rcbox(&self) -> Box<RcBox<T>> {
-        Box::from_raw(self.rcbox() as *const RcBox<T> as *mut RcBox<T>)
+    fn manual(&mut self) -> &mut ManuallyDrop<T> {
+        unsafe { &mut *(self.ptr.as_ptr() as *mut ManuallyDrop<T>) }
     }
 }
 
 impl<T> Rc<T> {
     pub fn new(t: T) -> Self {
-        let rcbox = Box::new(RcBox(RcBoxHeader::new(), t));
-        Self::from_rcbox(rcbox)
+        let rcbox = unsafe {
+            let rcbox = RcHeader::alloc(&t);
+            rcbox.write(t);
+            rcbox.assume_init_ref()
+        };
+
+        Rc{ptr: NonNull::from(rcbox), phantom: PhantomData}
     }
 }
 
 impl<T: ?Sized> Clone for Rc<T> {
     fn clone(&self) -> Self {
-        let rc = self.rc().get();
-        self.rc().set(rc + 1);
+        let rc = self.header().rc.get();
+        self.header().rc.set(rc + 1);
 
         Rc{ptr: self.ptr, phantom: PhantomData}
     }
@@ -89,27 +123,28 @@ impl<T: ?Sized> Clone for Rc<T> {
 
 impl<T: ?Sized> Drop for Rc<T> {
     fn drop(&mut self) {
-        let rc = self.rc().get();
+        let rc = self.header().rc.get();
         if rc == 1 {
-            //drop(unsafe { self.into_rcbox() });
+            unsafe {
+                let ptr = self.manual();
+                ManuallyDrop::drop(ptr);
+                RcHeader::dealloc(ptr);
+            }
         } else {
-            self.rc().set(rc - 1);
+            self.header().rc.set(rc - 1);
         }
     }
 }
 
 impl<T: Clone> Rc<T> {
-    pub fn try_unwrap(self) -> Result<T, Rc<T>> {
-        let rc = self.rc().get();
+    pub fn try_unwrap(mut self) -> Result<T, Rc<T>> {
+        let rc = self.header().rc.get();
         if rc == 1 {
             unsafe {
-                let mut rcbox = transmute::<
-                    Box<RcBox<T>>,
-                    Box<RcBox<ManuallyDrop<T>>>
-                >(
-                    self.into_rcbox()
-                );
-                Ok(ManuallyDrop::take(&mut rcbox.1))
+                let ptr = self.manual();
+                let t = ManuallyDrop::take(ptr);
+                RcHeader::dealloc(ptr);
+                Ok(t)
             }
         } else {
             Err(self)
@@ -168,18 +203,16 @@ impl<T: ?Sized + Default> Default for Rc<T> {
 
 // other casts
 impl<T> Rc<[T]> {
-    unsafe fn from_slice(src: &mut [ManuallyDrop<T>]) -> Rc<[T]> {
-        let raw = std::alloc::alloc(RcBoxHeader::layout(src));
-        let hdr = raw as *mut RcBoxHeader<[T]>;
-        hdr.write(RcBoxHeader::new());
+    unsafe fn from_array(src: &mut [ManuallyDrop<T>]) -> Rc<[T]> {
+        let rcbox = unsafe {
+            let rcbox = RcHeader::alloc_array(src);
+            for i in 0..src.len() {
+                rcbox[i].write(ManuallyDrop::take(&mut src[i]));
+            }
+            &*(rcbox as *const [MaybeUninit<T>] as *const [T])
+        };
 
-        let dst = raw.add(RcBoxHeader::offset(src)) as *mut T;
-        for i in 0..src.len() {
-            dst.write(ManuallyDrop::take(&mut src[i]));
-        }
-
-        let dst = std::slice::from_raw_parts_mut(dst, src.len());
-        Rc{ptr: NonNull::from(dst), phantom: PhantomData}
+        Rc{ptr: NonNull::from(rcbox), phantom: PhantomData}
     }
 }
 
@@ -187,7 +220,7 @@ impl<T> From<Box<[T]>> for Rc<[T]> {
     fn from(b: Box<[T]>) -> Self {
         unsafe {
             let mut b = transmute::<Box<[T]>, Box<[ManuallyDrop<T>]>>(b);
-            Self::from_slice(&mut b)
+            Self::from_array(&mut b)
         }
     }
 }
@@ -196,7 +229,7 @@ impl<T> From<Vec<T>> for Rc<[T]> {
     fn from(v: Vec<T>) -> Self {
         unsafe {
             let mut v = transmute::<Vec<T>, Vec<ManuallyDrop<T>>>(v);
-            Self::from_slice(&mut v)
+            Self::from_array(&mut v)
         }
     }
 }
@@ -220,10 +253,10 @@ where
         debug_assert!(size_of::<Self>() == size_of::<T>());
         debug_assert!(align_of::<Self>() == align_of::<T>());
         unsafe {
-            std::ptr::read(
-                &ManuallyDrop::new(self)
-                    as *const ManuallyDrop<Self>
-                    as *const T
+            ManuallyDrop::take(
+                &mut *(&mut ManuallyDrop::new(self)
+                    as *mut ManuallyDrop<Self>
+                    as *mut ManuallyDrop<T>)
             )
         }
     }
