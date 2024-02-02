@@ -10,11 +10,7 @@ use std::mem::size_of;
 use std::mem::align_of;
 use std::mem::transmute;
 
-struct RcHeader<T: ?Sized> {
-    rc: Cell<usize>,
-    // we need this to preserve metadata for zero-sized types
-    ptr: NonNull<T>,
-}
+struct RcHeader(Cell<usize>);
 
 // A transmutable Rc type
 #[repr(transparent)]
@@ -23,67 +19,63 @@ pub struct Rc<T: ?Sized> {
     phantom: PhantomData<T>,
 }
 
-impl<T: ?Sized> RcHeader<T> {
-    fn new(ptr: NonNull<T>) -> Self {
-        RcHeader{rc: Cell::new(1), ptr: ptr}
+impl RcHeader {
+    fn new() -> Self {
+        RcHeader(Cell::new(1))
     }
 
-    fn layout(t: &T) -> Layout {
-        Layout::new::<RcHeader<T>>()
+    fn layout<T: ?Sized>(t: &T) -> Layout {
+        Layout::new::<RcHeader>()
             .extend(Layout::for_value(t))
             .unwrap()
             .0
     }
 
-    fn offset(t: &T) -> usize {
-        Layout::new::<RcHeader<T>>()
+    fn offset<T: ?Sized>(t: &T) -> usize {
+        Layout::new::<RcHeader>()
             .extend(Layout::for_value(t))
             .unwrap()
             .1
     }
 
-    unsafe fn header(t: &T) -> &RcHeader<T> {
+    unsafe fn header<'a, T: ?Sized>(t: &'a T) -> &'a RcHeader {
         ((t as *const T as *const u8)
             .sub(RcHeader::offset(t))
-            as *const RcHeader<T>)
+            as *const RcHeader)
             .as_ref().unwrap()
     }
 
-    fn alloc<'a, 'b>(t: &T) -> &'a mut MaybeUninit<T>
-    where
-        T: Sized
-    {
+    fn alloc<'a, 'b, T>(t: &T) -> &'a mut MaybeUninit<T> {
         unsafe {
             let raw = std::alloc::alloc(RcHeader::layout(t));
-            let header = raw as *mut RcHeader<T>;
+            let header = raw as *mut RcHeader;
             let data = raw.add(RcHeader::offset(t)) as *mut T;
 
-            header.write(RcHeader::new(NonNull::new(data).unwrap()));
+            header.write(RcHeader::new());
             &mut *(data as *mut MaybeUninit<T>)
         }
     }
 
-    fn alloc_array<'a, 'b>(ts: &'a [ManuallyDrop<T>]) -> &'b mut [MaybeUninit<T>]
-    where
-        T: Sized
-    {
+    fn alloc_array<'a, 'b, T>(
+        ts: &'a [ManuallyDrop<T>]
+    ) -> &'b mut [MaybeUninit<T>] {
         unsafe {
             let raw = std::alloc::alloc(RcHeader::layout(ts));
-            let header = raw as *mut RcHeader<[T]>;
+            let header = raw as *mut RcHeader;
             let data = std::slice::from_raw_parts_mut(
                 raw.add(RcHeader::offset(ts)) as *mut T,
                 ts.len()
             ) as *mut [T];
 
-            header.write(RcHeader::new(NonNull::new(data).unwrap()));
+            header.write(RcHeader::new());
             &mut *(data as *mut [MaybeUninit<T>])
         }
     }
 
-    unsafe fn dealloc(t: &mut ManuallyDrop<T>) {
+    unsafe fn dealloc<T: ?Sized>(t: &mut ManuallyDrop<T>) {
         std::alloc::dealloc(
             RcHeader::header(t)
-                as *const RcHeader<ManuallyDrop<T>>
+                as *const RcHeader
                 as *mut u8,
             RcHeader::layout(t)
         );
@@ -91,11 +83,11 @@ impl<T: ?Sized> RcHeader<T> {
 }
 
 impl<T: ?Sized> Rc<T> {
-    fn header(&self) -> &RcHeader<T> {
+    fn header<'a>(&'a self) -> &'a RcHeader {
         unsafe { RcHeader::header(self.ptr.as_ref()) }
     }
 
-    fn manual(&mut self) -> &mut ManuallyDrop<T> {
+    fn manual<'a>(&'a mut self) -> &'a mut ManuallyDrop<T> {
         unsafe { &mut *(self.ptr.as_ptr() as *mut ManuallyDrop<T>) }
     }
 }
@@ -114,8 +106,8 @@ impl<T> Rc<T> {
 
 impl<T: ?Sized> Clone for Rc<T> {
     fn clone(&self) -> Self {
-        let rc = self.header().rc.get();
-        self.header().rc.set(rc + 1);
+        let rc = self.header().0.get();
+        self.header().0.set(rc + 1);
 
         Rc{ptr: self.ptr, phantom: PhantomData}
     }
@@ -123,7 +115,7 @@ impl<T: ?Sized> Clone for Rc<T> {
 
 impl<T: ?Sized> Drop for Rc<T> {
     fn drop(&mut self) {
-        let rc = self.header().rc.get();
+        let rc = self.header().0.get();
         if rc == 1 {
             unsafe {
                 let ptr = self.manual();
@@ -131,14 +123,14 @@ impl<T: ?Sized> Drop for Rc<T> {
                 RcHeader::dealloc(ptr);
             }
         } else {
-            self.header().rc.set(rc - 1);
+            self.header().0.set(rc - 1);
         }
     }
 }
 
 impl<T: Clone> Rc<T> {
     pub fn try_unwrap(mut self) -> Result<T, Rc<T>> {
-        let rc = self.header().rc.get();
+        let rc = self.header().0.get();
         if rc == 1 {
             unsafe {
                 let ptr = self.manual();
