@@ -17,7 +17,6 @@ use std::io::BufWriter;
 // The actual parser is over here
 mod errors;
 mod rc;
-use rc::Rc;
 mod tokenizer;
 use tokenizer::tokenize;
 use tokenizer::tokenize_at;
@@ -30,15 +29,10 @@ use edit::edit;
 
 
 // CLI arguments
-fn parse_rc_path(s: &std::ffi::OsStr) -> Rc<PathBuf> {
-    Rc::new(PathBuf::from(s))
-}
-
 #[derive(Debug, StructOpt)]
 #[structopt(rename_all="kebab")]
 struct Opt {
-    #[structopt(parse(from_os_str=parse_rc_path))]
-    input: Rc<PathBuf>,
+    input: PathBuf,
 
     #[structopt(short, long)]
     output: Option<PathBuf>,
@@ -61,7 +55,7 @@ fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::from_args();
 
     if opt.in_toml {
-        let f = File::open(opt.input.as_ref())?;
+        let f = File::open(&opt.input)?;
         let f = BufReader::new(f);
         if let Some(output) = opt.output {
             let mut f_ = File::create(output)?;
@@ -139,7 +133,7 @@ fn main() -> Result<(), anyhow::Error> {
         }
 
     } else {
-        let input = fs::read_to_string(opt.input.as_ref())?;
+        let input = fs::read_to_string(&opt.input)?;
 
         // tokenize
         let tokens = match tokenize(&opt.input, &input) {
