@@ -16,6 +16,7 @@ pub enum Expr<'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
     Decl(Rc<Expr<'a>>, Token<'a>),
+    Return(Token<'a>, Option<Rc<Expr<'a>>>),
     Call(Rc<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
     Index(Rc<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
     Block(Rc<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
@@ -36,6 +37,7 @@ pub enum Expr_<'b, 'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
     Decl(&'b Expr_<'b, 'a>, Token<'a>),
+    Return(Token<'a>, Option<&'b Expr_<'b, 'a>>),
     Call(&'b Expr_<'b, 'a>, Token<'a>, List_<'b, 'a>, Token<'a>),
     Index(&'b Expr_<'b, 'a>, Token<'a>, List_<'b, 'a>, Token<'a>),
     Block(&'b Expr_<'b, 'a>, Token<'a>, List_<'b, 'a>, Token<'a>),
@@ -79,6 +81,10 @@ impl<'b, 'a> Parser<'b, 'a> {
         &self.tokens[self.i..]
     }
 
+    fn tok(&self) -> Option<&'a str> {
+        self.tokens.get(self.i).map(|tok| tok.tok)
+    }
+
     fn tt(&self) -> Option<Tt> {
         self.tokens.get(self.i).map(|tok| tok.tt)
     }
@@ -119,30 +125,24 @@ pub fn parse<'a>(
         p: &mut Parser<'b, 'a>
     ) -> Result<Option<Expr<'a>>, ParseError> {
         let mut lh = match p.tt() {
+            Some(Tt::Sym) if p.tok() == Some("return") => Expr::Return(
+                p.munch(),
+                parse_expr(p)?.map(Rc::new)
+            ),
             Some(Tt::Sym) => Expr::Sym(p.munch()),
-            Some(Tt::Number) => Expr::Lit(p.munch()),
-            Some(Tt::String) => Expr::Lit(p.munch()),
-            Some(Tt::Tilde) => Expr::Unary(
-                p.munch(),
-                Rc::new(parse_expr_required(p)?),
-            ),
-            Some(Tt::Add) => Expr::Unary(
-                p.munch(),
-                Rc::new(parse_expr_required(p)?),
-            ),
-            Some(Tt::Sub) => Expr::Unary(
-                p.munch(),
-                Rc::new(parse_expr_required(p)?),
-            ),
-            Some(Tt::And) => Expr::Unary(
-                p.munch(),
-                Rc::new(parse_expr_required(p)?),
-            ),
-            Some(Tt::Dot) => Expr::Unary(
-                p.munch(),
-                Rc::new(parse_expr_required(p)?),
-            ),
-            Some(Tt::Not) => Expr::Unary(
+            Some(
+                Tt::Number
+                    | Tt::String
+            ) => Expr::Lit(p.munch()),
+            Some(
+                Tt::And
+                    | Tt::Tilde
+                    | Tt::Splat
+                    | Tt::Add
+                    | Tt::Sub
+                    | Tt::Not
+                    | Tt::Dot
+            ) => Expr::Unary(
                 p.munch(),
                 Rc::new(parse_expr_required(p)?),
             ),
@@ -169,101 +169,56 @@ pub fn parse<'a>(
         loop {
             lh = match p.tt() {
                 Some(Tt::Sym) => Expr::Decl(Rc::new(lh), p.munch()),
-                Some(Tt::PlusPlus) => Expr::Suffnary(
+                Some(
+                    Tt::PlusPlus
+                        | Tt::MinusMinus
+                ) => Expr::Suffnary(
                     Rc::new(lh),
                     p.munch(),
                 ),
-                Some(Tt::Dot) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Splat) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Slash) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Mod) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Add) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Sub) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::And) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::OrOr) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Eq) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Ne) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Le) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Ge) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Lt) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Gt) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Assign) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::AddAssign) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::SubAssign) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::Arrow) => Expr::Binary(
-                    Rc::new(lh),
-                    p.munch(),
-                    Rc::new(parse_expr_required(p)?),
-                ),
-                Some(Tt::BigArrow) => Expr::Binary(
+                Some(Tt::Splat) => {
+                    let tok = p.munch();
+                    match parse_expr(p)? {
+                        Some(rh) => Expr::Binary(
+                            Rc::new(lh),
+                            tok,
+                            Rc::new(rh),
+                        ),
+                        None => Expr::Suffnary(
+                            Rc::new(lh),
+                            tok,
+                        ),
+                    }
+                }
+                Some(
+                    Tt::BigArrow
+                        | Tt::Arrow
+                        | Tt::Shl
+                        | Tt::Shr
+                        | Tt::Eq
+                        | Tt::Ne
+                        | Tt::AddAssign
+                        | Tt::SubAssign
+                        | Tt::AndAssign
+                        | Tt::OrAssign
+                        | Tt::XorAssign
+                        | Tt::Le
+                        | Tt::Ge
+                        | Tt::Lt
+                        | Tt::Gt
+                        | Tt::Assign
+                        | Tt::AndAnd
+                        | Tt::And
+                        | Tt::OrOr
+                        | Tt::Or
+                        | Tt::Xor
+                        | Tt::Slash
+                        | Tt::Mod
+                        | Tt::Add
+                        | Tt::Sub
+                        | Tt::Not
+                        | Tt::Dot
+                ) => Expr::Binary(
                     Rc::new(lh),
                     p.munch(),
                     Rc::new(parse_expr_required(p)?),
@@ -493,6 +448,10 @@ impl<'b, 'a> Map<Fork<'a>> for Expr_<'b, 'a> {
             Expr_::Decl(expr, tok) => Expr::Decl(
                 Rc::new(expr._try_map(cb)?),
                 tok._try_map(cb)?,
+            ),
+            Expr_::Return(tok, expr) => Expr::Return(
+                tok._try_map(cb)?,
+                expr.map(|expr| expr._try_map(cb)).transpose()?.map(Rc::new),
             ),
             Expr_::Call(expr, l, list, r) => Expr::Call(
                 Rc::new(expr._try_map(cb)?),
