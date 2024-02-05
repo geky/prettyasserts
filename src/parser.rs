@@ -15,6 +15,7 @@ use crate::rc::Transborrow;
 pub enum Expr<'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
+    Label(Token<'a>, Token<'a>, Option<Rc<Expr<'a>>>),
     Decl(Rc<Expr<'a>>, Token<'a>),
     Return(Token<'a>, Option<Rc<Expr<'a>>>),
     Call(Rc<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
@@ -36,6 +37,7 @@ pub struct Tree<'a>(List<'a>, Token<'a>);
 pub enum Expr_<'b, 'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
+    Label(Token<'a>, Token<'a>, Option<&'b Expr_<'b, 'a>>),
     Decl(&'b Expr_<'b, 'a>, Token<'a>),
     Return(Token<'a>, Option<&'b Expr_<'b, 'a>>),
     Call(&'b Expr_<'b, 'a>, Token<'a>, List_<'b, 'a>, Token<'a>),
@@ -160,7 +162,10 @@ pub fn parse<'a>(
                 parse_list(p)?,
                 match p.tt() {
                     Some(Tt::RSquiggle) => p.munch(),
-                    _ => return Err(p.unexpected()),
+                    // C ifdef mess unfortunately break squiggle matching
+                    // pretty badly, so just accept unbalanced squiggles for
+                    // now, but use an empty string to round-trip correctly
+                    _ => tok(""),
                 },
             ))),
             _ => return Ok(None),
@@ -168,7 +173,10 @@ pub fn parse<'a>(
 
         loop {
             lh = match p.tt() {
-                Some(Tt::Sym) => Expr::Decl(Rc::new(lh), p.munch()),
+                Some(
+                    Tt::Sym
+                        | Tt::String
+                ) => Expr::Decl(Rc::new(lh), p.munch()),
                 Some(
                     Tt::PlusPlus
                         | Tt::MinusMinus
@@ -258,7 +266,10 @@ pub fn parse<'a>(
                     parse_list(p)?,
                     match p.tt() {
                         Some(Tt::RSquiggle) => p.munch(),
-                        _ => return Err(p.unexpected()),
+                        // C ifdef mess unfortunately break squiggle matching
+                        // pretty badly, so just accept unbalanced squiggles for
+                        // now, but use an empty string to round-trip correctly
+                        _ => tok(""),
                     },
                 ))),
                 _ => break,
@@ -277,28 +288,51 @@ pub fn parse<'a>(
         })
     }
 
+    fn parse_stmt<'b, 'a>(
+        p: &mut Parser<'b, 'a>
+    ) -> Result<Option<Expr<'a>>, ParseError> {
+        Ok(match p.tt() {
+            Some(Tt::Sym)
+                if p.tok() == Some("return")
+            => Some(Expr::Return(
+                p.munch(),
+                parse_expr(p)?.map(Rc::new)
+            )),
+            Some(Tt::Sym)
+                if p.tail().len() >= 2
+                && p.tail()[1].tt == Tt::Colon
+            => Some(Expr::Label(
+                p.munch(),
+                p.munch(),
+                parse_expr(p)?.map(Rc::new)
+            )),
+            _ => parse_expr(p)?,
+        })
+    }
+
     fn parse_list<'b, 'a>(
         p: &mut Parser<'b, 'a>
     ) -> Result<List<'a>, ParseError> {
         let mut list = vec![];
         Ok(loop {
-            let expr = parse_expr(p)?;
+            let stmt = parse_stmt(p)?;
             let comma = match p.tt() {
                 Some(Tt::Semi)  => Some(p.munch()),
                 Some(Tt::Comma) => Some(p.munch()),
                 _               => None,
             };
 
-            match (&expr, &comma) {
+            match (&stmt, &comma) {
                 (Some(Expr::Squiggle(..)), _)
                     | (Some(Expr::Block(..)), _)
+                    | (Some(Expr::Label(..)), _)
                     | (_, Some(_))
                 => {
-                    list.push((expr, comma));
+                    list.push((stmt, comma));
                     continue;
                 },
                 (Some(_), _) => {
-                    list.push((expr, comma));
+                    list.push((stmt, comma));
                 }
                 (None, None) => {}
             }
@@ -445,6 +479,11 @@ impl<'b, 'a> Map<Fork<'a>> for Expr_<'b, 'a> {
         let expr = match self {
             Expr_::Sym(tok) => Expr::Sym(tok._try_map(cb)?),
             Expr_::Lit(tok) => Expr::Lit(tok._try_map(cb)?),
+            Expr_::Label(label, tok, expr) => Expr::Label(
+                label._try_map(cb)?,
+                tok._try_map(cb)?,
+                expr.map(|expr| expr._try_map(cb)).transpose()?.map(Rc::new),
+            ),
             Expr_::Decl(expr, tok) => Expr::Decl(
                 Rc::new(expr._try_map(cb)?),
                 tok._try_map(cb)?,
