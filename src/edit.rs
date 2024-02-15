@@ -13,95 +13,309 @@ use crate::parser::sym;
 use crate::parser::span;
 
 
+fn cmp_name(tt: Tt) -> &'static str {
+    match tt {
+        Tt::Eq => "eq",
+        Tt::Ne => "ne",
+        Tt::Lt => "lt",
+        Tt::Gt => "gt",
+        Tt::Le => "le",
+        Tt::Ge => "ge",
+        _ => unreachable!(),
+    }
+}
+
+
 // edit the tree
 pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
-    if let
-        index@Expr_::Index(
-            Expr_::Decl(
-                Expr_::Sym(Token{tok: "uint8_t", ..}),
-                Token{tok: "buffer", ..},
-            ),
-            ..
-        ) = expr.borrow()
-    {
-        let data = sym("lfsr_data_t data").indent(index.col()-1);
-        return Ok(span(&[
-            data,
-            index.into(),
-        ]));
-    }
-
-    if let
-        Expr_::Binary(
-            Expr_::Call(
-                Expr_::Sym(sym_@Token{tok: "lfsr_rbyd_get", ..}),
-                lp,
-                &[
-                    (Some(lfs),     c0),
-                    (Some(rbyd),    c1),
-                    (Some(rid),     c2),
-                    (Some(tag),     c3),
-                    (Some(buffer),  c4),
-                    (Some(size),    c5),
-                ],
-                rp,
-            ),
-            arrow@Token{tt: Tt::BigArrow, ..},
-            rh
-        ) = expr.borrow()
-    {
-        // left => no error
-        // right => error
-        let rh = match rh {
-            rh@Expr_::Sym(sym_) if sym_.tok.starts_with("LFS_ERR_") => Right(rh),
-            rh => Left(rh),
-        };
-
-        let mut list_ = vec![];
-        list_.push(Expr::Binary(
-            Rc::new(Expr::Call(
-                Rc::new(sym("lfsr_rbyd_lookup").lws_(sym_.lws)),
+    Ok(match expr.borrow() {
+        // assert(memcmp(a, b, n) ?= 0)
+        Expr_::Call(
+            Expr_::Sym(assert@Token{tok: "assert", ..}),
+            lp,
+            &[
+                (
+                    Some(Expr_::Binary(
+                        Expr_::Call(
+                            Expr_::Sym(Token{tok: "memcmp", ..}),
+                            _,
+                            &[
+                                (Some(lh), Some(comma1)),
+                                (Some(rh), Some(comma2)),
+                                (Some(n), None),
+                            ],
+                            _,
+                        ),
+                        cmp@Token{
+                            tt: Tt::Eq
+                                | Tt::Ne
+                                | Tt::Lt
+                                | Tt::Gt
+                                | Tt::Le
+                                | Tt::Ge,
+                            ..
+                        },
+                        Expr_::Lit(Token{tok: "0", ..}),
+                    )),
+                    None
+                )
+            ],
+            rp,
+        ) => {
+            Expr::Call(
+                Rc::new(sym(
+                    format!("__PRETTY_ASSERT_MEM_{}",
+                        cmp_name(cmp.tt).to_ascii_uppercase()
+                    )
+                ).lws_(expr.lws())),
                 *lp,
                 Rc::from(vec![
-                    (Some(lfs.into()),  c0),
-                    (Some(rbyd.into()), c1),
-                    (Some(rid.into()),  c2),
-                    (Some(tag.into()),  c3),
-                    (Some(match rh {
-                        Left(_) => sym("&data").lws_(" "),
-                        Right(_) => sym("&data").indent(sym_.col-1+8),
-                    }), None)
+                    (
+                        Some(Expr::from(lh)),
+                        Some(comma1)
+                    ),
+                    (
+                        Some(Expr::from(rh)),
+                        Some(comma2)
+                    ),
+                    (
+                        Some(Expr::from(n)),
+                        None
+                    )
                 ]),
                 *rp,
-            )),
-            arrow.lws_(" "),
-            Rc::new(match rh {
-                Left(_) => sym("0").lws_(" "),
-                Right(rh) => rh.deref().into(),
-            }),
-        ));
-
-        if let Left(rh) = rh {
-            list_.push(Expr::Binary(
-                Rc::new(Expr::Call(
-                    Rc::new(sym("lfsr_data_read").indent(sym_.col-1)),
-                    *lp,
-                    Rc::from(vec![
-                        (Some(sym("&lfs")), Some(tok(","))),
-                        (Some(sym("&data").lws_(" ")), Some(tok(","))),
-                        (Some(buffer.into()),   c4),
-                        (Some(size.into()),     c5),
-                    ]),
-                    *rp
-                )),
-                tok("=>").lws_(" "),
-                Rc::new(rh.deref().into()),
-            ));
+            )
         }
 
-        return Ok(span(&list_));
-    }
+        // assert(strcmp(a, b) ?= 0)
+        Expr_::Call(
+            Expr_::Sym(assert@Token{tok: "assert", ..}),
+            lp,
+            &[
+                (
+                    Some(Expr_::Binary(
+                        Expr_::Call(
+                            Expr_::Sym(Token{tok: "strcmp", ..}),
+                            _,
+                            &[
+                                (Some(lh), Some(comma)),
+                                (Some(rh), None),
+                            ],
+                            _,
+                        ),
+                        cmp@Token{
+                            tt: Tt::Eq
+                                | Tt::Ne
+                                | Tt::Lt
+                                | Tt::Gt
+                                | Tt::Le
+                                | Tt::Ge,
+                            ..
+                        },
+                        Expr_::Lit(Token{tok: "0", ..}),
+                    )),
+                    None
+                )
+            ],
+            rp,
+        ) => {
+            Expr::Call(
+                Rc::new(sym(
+                    format!("__PRETTY_ASSERT_STR_{}",
+                        cmp_name(cmp.tt).to_ascii_uppercase()
+                    )
+                ).lws_(expr.lws())),
+                *lp,
+                Rc::from(vec![
+                    (
+                        Some(Expr::from(lh)),
+                        Some(comma)
+                    ),
+                    (
+                        Some(Expr::from(rh)),
+                        None
+                    )
+                ]),
+                *rp,
+            )
+        }
 
-    Ok(expr)
+        // assert(a ?= b)
+        Expr_::Call(
+            Expr_::Sym(assert@Token{tok: "assert", ..}),
+            lp,
+            &[
+                (
+                    Some(Expr_::Binary(
+                        lh,
+                        cmp@Token{
+                            tt: Tt::Eq
+                                | Tt::Ne
+                                | Tt::Lt
+                                | Tt::Gt
+                                | Tt::Le
+                                | Tt::Ge,
+                            ..
+                        },
+                        rh,
+                    )),
+                    None
+                )
+            ],
+            rp,
+        ) => {
+            Expr::Call(
+                Rc::new(sym(
+                    format!("__PRETTY_ASSERT_INT_{}",
+                        cmp_name(cmp.tt).to_ascii_uppercase()
+                    )
+                ).lws_(expr.lws())),
+                *lp,
+                Rc::from(vec![
+                    (
+                        Some(Expr::from(lh)),
+                        Some(tok(",").lws_(cmp.lws))
+                    ),
+                    (
+                        Some(Expr::from(rh)),
+                        None
+                    )
+                ]),
+                *rp,
+            )
+        }
+
+        // assert(a)
+        Expr_::Call(
+            Expr_::Sym(assert@Token{tok: "assert", ..}),
+            lp,
+            &[
+                (Some(expr_), None),
+            ],
+            rp,
+        ) => {
+            Expr::Call(
+                Rc::new(sym("__PRETTY_ASSERT_BOOL_EQ").lws_(expr.lws())),
+                *lp,
+                Rc::from(vec![
+                    (
+                        Some(Expr::from(expr_)),
+                        Some(tok(","))
+                    ),
+                    (
+                        Some(sym("true").lws_(" ")),
+                        None
+                    )
+                ]),
+                *rp,
+            )
+        }
+
+        // unreachable()
+        Expr_::Call(
+            Expr_::Sym(unreachable@Token{tok: "unreachable", ..}),
+            lp,
+            &[],
+            rp,
+        ) => {
+            Expr::Call(
+                Rc::new(sym("__PRETTY_ASSERT_UNREACHABLE").lws_(expr.lws())),
+                *lp,
+                Rc::from(vec![]),
+                *rp,
+            )
+        }
+
+        // memcmp(a, b, n) => 0
+        Expr_::Binary(
+            Expr_::Call(
+                Expr_::Sym(Token{tok: "memcmp", ..}),
+                _,
+                &[
+                    (Some(lh), Some(comma1)),
+                    (Some(rh), Some(comma2)),
+                    (Some(n), None),
+                ],
+                _,
+            ),
+            arrow@Token{tt: Tt::BigArrow, ..},
+            Expr_::Lit(Token{tok: "0", ..}),
+        ) => {
+            Expr::Call(
+                Rc::new(sym("__PRETTY_ASSERT_MEM_EQ").lws_(expr.lws())),
+                tok("("),
+                Rc::from(vec![
+                    (
+                        Some(Expr::from(lh)),
+                        Some(comma1)
+                    ),
+                    (
+                        Some(Expr::from(rh)),
+                        Some(comma2)
+                    ),
+                    (
+                        Some(Expr::from(n)),
+                        None
+                    )
+                ]),
+                tok(")"),
+            )
+        }
+
+        // strcmp(a, b) => 0
+        Expr_::Binary(
+            Expr_::Call(
+                Expr_::Sym(Token{tok: "strcmp", ..}),
+                _,
+                &[
+                    (Some(lh), Some(comma)),
+                    (Some(rh), None),
+                ],
+                _,
+            ),
+            arrow@Token{tt: Tt::BigArrow, ..},
+            Expr_::Lit(Token{tok: "0", ..}),
+        ) => {
+            Expr::Call(
+                Rc::new(sym("__PRETTY_ASSERT_STR_EQ").lws_(expr.lws())),
+                tok("("),
+                Rc::from(vec![
+                    (
+                        Some(Expr::from(lh)),
+                        Some(comma)
+                    ),
+                    (
+                        Some(Expr::from(rh)),
+                        None
+                    )
+                ]),
+                tok(")"),
+            )
+        }
+
+        // a => b
+        Expr_::Binary(
+            &lh,
+            arrow@Token{tt: Tt::BigArrow, ..},
+            &rh
+        ) => {
+            Expr::Call(
+                Rc::new(sym("__PRETTY_ASSERT_INT_EQ").lws_(expr.lws())),
+                tok("("),
+                Rc::from(vec![
+                    (
+                        Some(Expr::from(lh).lws_("")),
+                        Some(tok(",").lws_(arrow.lws))
+                    ),
+                    (
+                        Some(Expr::from(rh)),
+                        None
+                    )
+                ]),
+                tok(")"),
+            )
+        }
+        _ => expr,
+    })
 }
 

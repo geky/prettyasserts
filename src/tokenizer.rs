@@ -183,18 +183,6 @@ impl<'a> Tokenizer<'a> {
         &self.input[self.i..]
     }
 
-    fn _next(&mut self, n: usize) {
-        for _ in 0..n {
-            if self.input[self.i..].chars().next() == Some('\n') {
-                self.line += 1;
-                self.col = 1;
-            } else {
-                self.col += 1;
-            }
-            self.i += 1;
-        }
-    }
-
     fn match_(&mut self, p: &'static str) -> Option<&'a str> {
         let r = self.cache.entry(p)
             .or_insert_with(|| {
@@ -213,6 +201,18 @@ impl<'a> Tokenizer<'a> {
 
     fn matches(&mut self, p: &'static str) -> bool {
         self.match_(p).is_some()
+    }
+
+    fn _next(&mut self, n: usize) {
+        for _ in 0..n {
+            if self.input[self.i..].chars().next() == Some('\n') {
+                self.line += 1;
+                self.col = 1;
+            } else {
+                self.col += 1;
+            }
+            self.i += 1;
+        }
     }
 
     fn skip_ws(&mut self, n: usize) {
@@ -281,7 +281,14 @@ pub fn tokenize_at<'a>(
                 _ if t.matches(r"#") => {
                     t.skip_ws(1);
                     while !t.is_done() && !t.matches(r"\n") {
-                        t.skip_ws(1);
+                        if t.matches(r"\\") {
+                            t.skip_ws(1);
+                            if t.matches(r"\n") {
+                                t.skip_ws(1);
+                            }
+                        } else {
+                            t.skip_ws(1);
+                        }
                     }
                 }
                 _ if t.matches(r"/\*") => {

@@ -1,6 +1,6 @@
 [package]
-name = "qadte"
-description = "A quick and dirty tree editor"
+name = "prettyasserts"
+description = "Make C asserts pretty asserts"
 version = "0.1.0"
 edition = "2021"
 
