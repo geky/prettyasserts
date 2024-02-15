@@ -15,8 +15,9 @@ use crate::rc::Transborrow;
 pub enum Expr<'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
+    DotDotDot(Token<'a>),
     Label(Token<'a>, Token<'a>, Option<Rc<Expr<'a>>>),
-    Case(Token<'a>, Token<'a>, Token<'a>, Option<Rc<Expr<'a>>>),
+    Case(Token<'a>, Rc<Expr<'a>>, Token<'a>, Option<Rc<Expr<'a>>>),
     Decl(Rc<Expr<'a>>, Token<'a>),
     Return(Token<'a>, Option<Rc<Expr<'a>>>),
     Call(Rc<Expr<'a>>, Token<'a>, List<'a>, Token<'a>),
@@ -38,8 +39,9 @@ pub struct Tree<'a>(List<'a>, Token<'a>);
 pub enum Expr_<'b, 'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
+    DotDotDot(Token<'a>),
     Label(Token<'a>, Token<'a>, Option<&'b Expr_<'b, 'a>>),
-    Case(Token<'a>, Token<'a>, Token<'a>, Option<&'b Expr<'a>>),
+    Case(Token<'a>, &'b Expr_<'b, 'a>, Token<'a>, Option<&'b Expr<'a>>),
     Decl(&'b Expr_<'b, 'a>, Token<'a>),
     Return(Token<'a>, Option<&'b Expr_<'b, 'a>>),
     Call(&'b Expr_<'b, 'a>, Token<'a>, List_<'b, 'a>, Token<'a>),
@@ -173,6 +175,7 @@ pub fn parse<'a>(
                     Tt::Number
                         | Tt::String
                 ) => Expr::Lit(p.munch()),
+                Some(Tt::DotDotDot) => Expr::DotDotDot(p.munch()),
                 Some(
                     Tt::And
                         | Tt::Tilde
@@ -189,6 +192,11 @@ pub fn parse<'a>(
                     p.munch(),
                     parse_list(p)?,
                     p.match_munch(Tt::RParen)?,
+                ),
+                Some(Tt::LSquare) => Expr::Squiggle(
+                    p.munch(),
+                    parse_list(p)?,
+                    p.match_munch(Tt::RSquare)?,
                 ),
                 // squiggles terminate
                 Some(Tt::LSquiggle) => return Ok(Some(Expr::Squiggle(
@@ -219,7 +227,11 @@ pub fn parse<'a>(
                         Rc::new(lh),
                         p.munch(),
                     ),
-                    Some(Tt::Splat) => {
+                    Some(
+                        Tt::Splat
+                            | Tt::SplatSplat
+                            | Tt::SplatSplatSplat
+                    ) => {
                         let tok = p.munch();
                         match parse_expr_1(p)? {
                             Some(rh) => Expr::Binary(
@@ -317,11 +329,16 @@ pub fn parse<'a>(
 
             loop {
                 lh = match p.tt() {
-                    Some(Tt::AddAssign
-                            | Tt::SubAssign
+                    Some(Tt::ShlAssign
+                            | Tt::ShrAssign
                             | Tt::AndAssign
                             | Tt::OrAssign
                             | Tt::XorAssign
+                            | Tt::SplatAssign
+                            | Tt::SlashAssign
+                            | Tt::ModAssign
+                            | Tt::AddAssign
+                            | Tt::SubAssign
                             | Tt::Assign
                             | Tt::AndAnd
                             | Tt::And
@@ -370,13 +387,10 @@ pub fn parse<'a>(
             )),
             Some(Tt::Sym)
                 if p.tok() == Some("case")
-                && p.tail().len() >= 3
-                && p.tail()[1].tt == Tt::Sym
-                && p.tail()[2].tt == Tt::Colon
             => Some(Expr::Case(
                 p.munch(),
-                p.munch(),
-                p.munch(),
+                Rc::new(required(parse_expr)(p)?),
+                p.match_munch(Tt::Colon)?,
                 parse_expr(p)?.map(Rc::new)
             )),
             _ => {
@@ -564,6 +578,7 @@ impl<'b, 'a> Map<Fork<'a>> for Expr_<'b, 'a> {
         let expr = match self {
             Expr_::Sym(tok) => Expr::Sym(tok._try_map(cb)?),
             Expr_::Lit(tok) => Expr::Lit(tok._try_map(cb)?),
+            Expr_::DotDotDot(tok) => Expr::DotDotDot(tok._try_map(cb)?),
             Expr_::Label(label, tok, expr) => Expr::Label(
                 label._try_map(cb)?,
                 tok._try_map(cb)?,
@@ -571,7 +586,7 @@ impl<'b, 'a> Map<Fork<'a>> for Expr_<'b, 'a> {
             ),
             Expr_::Case(case, label, tok, expr) => Expr::Case(
                 case._try_map(cb)?,
-                label._try_map(cb)?,
+                Rc::new(label._try_map(cb)?),
                 tok._try_map(cb)?,
                 expr.map(|expr| expr._try_map(cb)).transpose()?.map(Rc::new),
             ),

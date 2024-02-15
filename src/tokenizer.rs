@@ -12,50 +12,58 @@ use crate::errors::ParseError;
 // lexical stuff
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Tt {
-    Sym,            // blah1
-    Number,         // 0x1234
-    String,         // "asdfasdf"
-    LParen,         // (
-    RParen,         // )
-    LSquiggle,      // {
-    RSquiggle,      // }
-    LSquare,        // [
-    RSquare,        // ]
-    BigArrow,       // =>
-    Arrow,          // ->
-    Shl,            // <<
-    Shr,            // >>
-    Eq,             // ==
-    Ne,             // !=
-    AddAssign,      // +=
-    SubAssign,      // -=
-    AndAssign,      // &=
-    OrAssign,       // |=
-    XorAssign,      // ^=
-    Le,             // <=
-    Ge,             // >=
-    Lt,             // <
-    Gt,             // >
-    Assign,         // =
-    AndAnd,         // &&
-    And,            // &
-    OrOr,           // ||
-    Or,             // |
-    Xor,            // ^
-    Tilde,          // ~
-    Splat,          // *
-    Slash,          // /
-    Mod,            // %
-    PlusPlus,       // ++
-    Add,            // +
-    MinusMinus,     // --
-    Sub,            // -
-    Not,            // !
-    Question,       // ?
-    Colon,          // :
-    Dot,            // .
-    Comma,          // ,
-    Semi,           // ;
+    Sym,                // blah1
+    Number,             // 0x1234
+    String,             // "asdfasdf"
+    LParen,             // (
+    RParen,             // )
+    LSquiggle,          // {
+    RSquiggle,          // }
+    LSquare,            // [
+    RSquare,            // ]
+    BigArrow,           // =>
+    Arrow,              // ->
+    SplatAssign,        // *=
+    SlashAssign,        // /=
+    ModAssign,          // %=
+    ShlAssign,          // <<=
+    ShrAssign,          // >>=
+    AndAssign,          // &=
+    OrAssign,           // |=
+    XorAssign,          // ^=
+    AddAssign,          // +=
+    SubAssign,          // -=
+    Shl,                // <<
+    Shr,                // >>
+    Eq,                 // ==
+    Ne,                 // !=
+    Le,                 // <=
+    Ge,                 // >=
+    Lt,                 // <
+    Gt,                 // >
+    Assign,             // =
+    AndAnd,             // &&
+    And,                // &
+    OrOr,               // ||
+    Or,                 // |
+    Xor,                // ^
+    Tilde,              // ~
+    SplatSplatSplat,    // ***
+    SplatSplat,         // **
+    Splat,              // *
+    Slash,              // /
+    Mod,                // %
+    PlusPlus,           // ++
+    Add,                // +
+    MinusMinus,         // --
+    Sub,                // -
+    Not,                // !
+    Question,           // ?
+    Colon,              // :
+    DotDotDot,          // ...
+    Dot,                // .
+    Comma,              // ,
+    Semi,               // ;
     TrailingWs,
 }
 
@@ -315,47 +323,55 @@ pub fn tokenize_at<'a>(
                 t.munch(Tt::String)
             }
             // tokens
-            _ if t.matches(r"\(")   => t.munch(Tt::LParen),
-            _ if t.matches(r"\)")   => t.munch(Tt::RParen),
-            _ if t.matches(r"\{")   => t.munch(Tt::LSquiggle),
-            _ if t.matches(r"\}")   => t.munch(Tt::RSquiggle),
-            _ if t.matches(r"\[")   => t.munch(Tt::LSquare),
-            _ if t.matches(r"\]")   => t.munch(Tt::RSquare),
-            _ if t.matches(r"=>")   => t.munch(Tt::BigArrow),
-            _ if t.matches(r"->")   => t.munch(Tt::Arrow),
-            _ if t.matches(r"<<")   => t.munch(Tt::Shl),
-            _ if t.matches(r">>")   => t.munch(Tt::Shr),
-            _ if t.matches(r"==")   => t.munch(Tt::Eq),
-            _ if t.matches(r"!=")   => t.munch(Tt::Ne),
-            _ if t.matches(r"\+=")  => t.munch(Tt::AddAssign),
-            _ if t.matches(r"-=")   => t.munch(Tt::SubAssign),
-            _ if t.matches(r"&=")   => t.munch(Tt::AndAssign),
-            _ if t.matches(r"\|=")  => t.munch(Tt::OrAssign),
-            _ if t.matches(r"\^=")  => t.munch(Tt::XorAssign),
-            _ if t.matches(r"<=")   => t.munch(Tt::Le),
-            _ if t.matches(r">=")   => t.munch(Tt::Ge),
-            _ if t.matches(r"<")    => t.munch(Tt::Lt),
-            _ if t.matches(r">")    => t.munch(Tt::Gt),
-            _ if t.matches(r"=")    => t.munch(Tt::Assign),
-            _ if t.matches(r"&&")   => t.munch(Tt::AndAnd),
-            _ if t.matches(r"&")    => t.munch(Tt::And),
-            _ if t.matches(r"\|\|") => t.munch(Tt::OrOr),
-            _ if t.matches(r"\|")   => t.munch(Tt::Or),
-            _ if t.matches(r"\^")   => t.munch(Tt::Xor),
-            _ if t.matches(r"~")    => t.munch(Tt::Tilde),
-            _ if t.matches(r"\*")   => t.munch(Tt::Splat),
-            _ if t.matches(r"/")    => t.munch(Tt::Slash),
-            _ if t.matches(r"%")    => t.munch(Tt::Mod),
-            _ if t.matches(r"\+\+") => t.munch(Tt::PlusPlus),
-            _ if t.matches(r"\+")   => t.munch(Tt::Add),
-            _ if t.matches(r"--")   => t.munch(Tt::MinusMinus),
-            _ if t.matches(r"-")    => t.munch(Tt::Sub),
-            _ if t.matches(r"!")    => t.munch(Tt::Not),
-            _ if t.matches(r"\?")   => t.munch(Tt::Question),
-            _ if t.matches(r":")    => t.munch(Tt::Colon),
-            _ if t.matches(r"\.")   => t.munch(Tt::Dot),
-            _ if t.matches(r",")    => t.munch(Tt::Comma),
-            _ if t.matches(r";")    => t.munch(Tt::Semi),
+            _ if t.matches(r"\(")     => t.munch(Tt::LParen),
+            _ if t.matches(r"\)")     => t.munch(Tt::RParen),
+            _ if t.matches(r"\{")     => t.munch(Tt::LSquiggle),
+            _ if t.matches(r"\}")     => t.munch(Tt::RSquiggle),
+            _ if t.matches(r"\[")     => t.munch(Tt::LSquare),
+            _ if t.matches(r"\]")     => t.munch(Tt::RSquare),
+            _ if t.matches(r"=>")     => t.munch(Tt::BigArrow),
+            _ if t.matches(r"->")     => t.munch(Tt::Arrow),
+            _ if t.matches(r"<<=")    => t.munch(Tt::ShlAssign),
+            _ if t.matches(r">>=")    => t.munch(Tt::ShrAssign),
+            _ if t.matches(r"&=")     => t.munch(Tt::AndAssign),
+            _ if t.matches(r"\|=")    => t.munch(Tt::OrAssign),
+            _ if t.matches(r"\^=")    => t.munch(Tt::XorAssign),
+            _ if t.matches(r"\*=")    => t.munch(Tt::SplatAssign),
+            _ if t.matches(r"/=")     => t.munch(Tt::SlashAssign),
+            _ if t.matches(r"%=")     => t.munch(Tt::ModAssign),
+            _ if t.matches(r"\+=")    => t.munch(Tt::AddAssign),
+            _ if t.matches(r"-=")     => t.munch(Tt::SubAssign),
+            _ if t.matches(r"<<")     => t.munch(Tt::Shl),
+            _ if t.matches(r">>")     => t.munch(Tt::Shr),
+            _ if t.matches(r"==")     => t.munch(Tt::Eq),
+            _ if t.matches(r"!=")     => t.munch(Tt::Ne),
+            _ if t.matches(r"<=")     => t.munch(Tt::Le),
+            _ if t.matches(r">=")     => t.munch(Tt::Ge),
+            _ if t.matches(r"<")      => t.munch(Tt::Lt),
+            _ if t.matches(r">")      => t.munch(Tt::Gt),
+            _ if t.matches(r"=")      => t.munch(Tt::Assign),
+            _ if t.matches(r"&&")     => t.munch(Tt::AndAnd),
+            _ if t.matches(r"&")      => t.munch(Tt::And),
+            _ if t.matches(r"\|\|")   => t.munch(Tt::OrOr),
+            _ if t.matches(r"\|")     => t.munch(Tt::Or),
+            _ if t.matches(r"\^")     => t.munch(Tt::Xor),
+            _ if t.matches(r"~")      => t.munch(Tt::Tilde),
+            _ if t.matches(r"\*\*\*") => t.munch(Tt::SplatSplatSplat),
+            _ if t.matches(r"\*\*")   => t.munch(Tt::SplatSplat),
+            _ if t.matches(r"\*")     => t.munch(Tt::Splat),
+            _ if t.matches(r"/")      => t.munch(Tt::Slash),
+            _ if t.matches(r"%")      => t.munch(Tt::Mod),
+            _ if t.matches(r"\+\+")   => t.munch(Tt::PlusPlus),
+            _ if t.matches(r"\+")     => t.munch(Tt::Add),
+            _ if t.matches(r"--")     => t.munch(Tt::MinusMinus),
+            _ if t.matches(r"-")      => t.munch(Tt::Sub),
+            _ if t.matches(r"!")      => t.munch(Tt::Not),
+            _ if t.matches(r"\?")     => t.munch(Tt::Question),
+            _ if t.matches(r":")      => t.munch(Tt::Colon),
+            _ if t.matches(r"\.\.\.") => t.munch(Tt::DotDotDot),
+            _ if t.matches(r"\.")     => t.munch(Tt::Dot),
+            _ if t.matches(r",")      => t.munch(Tt::Comma),
+            _ if t.matches(r";")      => t.munch(Tt::Semi),
             // wait, end of input?
             "" => t.munch(Tt::TrailingWs),
             // unknown token
