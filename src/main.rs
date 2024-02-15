@@ -4,6 +4,8 @@
 
 use structopt::StructOpt;
 use anyhow;
+use regex::Regex;
+use regex::Captures;
 
 use std::fs;
 use std::fs::File;
@@ -26,6 +28,10 @@ use parser::parse;
 use parser::Map;
 mod edit;
 use edit::edit;
+
+
+// prettyassert code is over here
+const PRETTYASSERT: &'static str = include_str!("prettyassert.c");
 
 
 // CLI arguments
@@ -126,6 +132,24 @@ fn main() -> Result<(), anyhow::Error> {
     if let Some(output) = opt.output {
         let f = File::create(output)?;
         let mut f = BufWriter::new(f);
+
+        // first write out our prettyassert code
+        write!(f, "{}",
+            Regex::new(r"__PRETTY_ASSERT_(COMMAND|ARGS|LIMIT)")?
+                .replace_all(PRETTYASSERT, |m: &Captures| {
+                    match &m[0] {
+                        "__PRETTY_ASSERT_COMMAND"   => std::env::args().nth(0).unwrap().into(),
+                        "__PRETTY_ASSERT_ARGS"      => std::env::args().collect::<Vec<_>>().join(" "),
+                        "__PRETTY_ASSERT_LIMIT"     => format!("{}", opt.limit),
+                        _ => unreachable!(),
+                    }
+                })
+        )?;
+
+        // add a line pragma to map to original source
+        writeln!(f, "#line 1 \"{}\"", opt.input.to_string_lossy())?;
+
+        // now write out our modified tree
         tree.try_visit(|tok: &Token<'_>| {
             // make sure to keep whitespace!
             write!(f, "{}", tok.lws)?;
