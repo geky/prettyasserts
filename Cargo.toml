@@ -1,6 +1,6 @@
 [package]
 name = "prettyasserts"
-description = "Make C asserts pretty asserts"
+description = "A preprocessor that makes C asserts easier to debug"
 version = "0.1.0"
 edition = "2021"
 

@@ -1,5 +1,7 @@
 
-## Make C asserts pretty asserts
+## Pretty asserts
+
+A preprocessor that makes C asserts easier to debug
 
 TODO
 

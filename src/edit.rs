@@ -2,6 +2,7 @@
 use either::{Left, Right};
 
 use std::ops::Deref;
+use std::collections::HashSet;
 
 use crate::rc::Rc;
 use crate::rc::Transborrow;
@@ -11,6 +12,18 @@ use crate::tokenizer::tok;
 use crate::parser::{Expr, Expr_};
 use crate::parser::sym;
 use crate::parser::span;
+use crate::Opt;
+
+
+const DEFAULT_ASSERTS: [&'static str; 2] = [
+    "assert",
+    "__builtin_assert",
+];
+
+const DEFAULT_UNREACHABLES: [&'static str; 2] = [
+    "unreachable",
+    "__builtin_unreachable",
+];
 
 
 fn cmp_name(tt: Tt) -> &'static str {
@@ -27,11 +40,21 @@ fn cmp_name(tt: Tt) -> &'static str {
 
 
 // edit the tree
-pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
+pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
+    let asserts = (!opt.no_defaults)
+        .then_some(DEFAULT_ASSERTS.into_iter()).into_iter().flatten()
+        .chain(opt.assert.iter().map(|s| s.deref()))
+        .collect::<HashSet<&str>>();
+    let unreachables = (!opt.no_defaults)
+        .then_some(DEFAULT_UNREACHABLES.into_iter()).into_iter().flatten()
+        .chain(opt.unreachable.iter().map(|s| s.deref()))
+        .collect::<HashSet<&str>>();
+    let arrows = !opt.no_defaults || opt.arrow;
+
     Ok(match expr.borrow() {
         // assert(memcmp(a, b, n) ?= 0)
         Expr_::Call(
-            Expr_::Sym(assert@Token{tok: "assert", ..}),
+            Expr_::Sym(assert@Token{tok: assert_, ..}),
             lp,
             &[
                 (
@@ -61,7 +84,7 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
                 )
             ],
             rp,
-        ) => {
+        ) if asserts.contains(assert_) => {
             Expr::Call(
                 Rc::new(sym(
                     format!("__PRETTY_ASSERT_MEM_{}",
@@ -89,7 +112,7 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
 
         // assert(strcmp(a, b) ?= 0)
         Expr_::Call(
-            Expr_::Sym(assert@Token{tok: "assert", ..}),
+            Expr_::Sym(assert@Token{tok: assert_, ..}),
             lp,
             &[
                 (
@@ -118,7 +141,7 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
                 )
             ],
             rp,
-        ) => {
+        ) if asserts.contains(assert_) => {
             Expr::Call(
                 Rc::new(sym(
                     format!("__PRETTY_ASSERT_STR_{}",
@@ -142,7 +165,7 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
 
         // assert(a ?= b)
         Expr_::Call(
-            Expr_::Sym(assert@Token{tok: "assert", ..}),
+            Expr_::Sym(assert@Token{tok: assert_, ..}),
             lp,
             &[
                 (
@@ -163,7 +186,7 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
                 )
             ],
             rp,
-        ) => {
+        ) if asserts.contains(assert_) => {
             Expr::Call(
                 Rc::new(sym(
                     format!("__PRETTY_ASSERT_INT_{}",
@@ -187,13 +210,13 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
 
         // assert(a)
         Expr_::Call(
-            Expr_::Sym(assert@Token{tok: "assert", ..}),
+            Expr_::Sym(assert@Token{tok: assert_, ..}),
             lp,
             &[
                 (Some(expr_), None),
             ],
             rp,
-        ) => {
+        ) if asserts.contains(assert_) => {
             Expr::Call(
                 Rc::new(sym("__PRETTY_ASSERT_BOOL_EQ").lws_(expr.lws())),
                 *lp,
@@ -213,11 +236,11 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
 
         // unreachable()
         Expr_::Call(
-            Expr_::Sym(unreachable@Token{tok: "unreachable", ..}),
+            Expr_::Sym(unreachable@Token{tok: unreachable_, ..}),
             lp,
             &[],
             rp,
-        ) => {
+        ) if unreachables.contains(unreachable_) => {
             Expr::Call(
                 Rc::new(sym("__PRETTY_ASSERT_UNREACHABLE").lws_(expr.lws())),
                 *lp,
@@ -240,7 +263,7 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
             ),
             arrow@Token{tt: Tt::BigArrow, ..},
             Expr_::Lit(Token{tok: "0", ..}),
-        ) => {
+        ) if arrows => {
             Expr::Call(
                 Rc::new(sym("__PRETTY_ASSERT_MEM_EQ").lws_(expr.lws())),
                 tok("("),
@@ -275,7 +298,7 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
             ),
             arrow@Token{tt: Tt::BigArrow, ..},
             Expr_::Lit(Token{tok: "0", ..}),
-        ) => {
+        ) if arrows => {
             Expr::Call(
                 Rc::new(sym("__PRETTY_ASSERT_STR_EQ").lws_(expr.lws())),
                 tok("("),
@@ -298,7 +321,7 @@ pub fn edit<'a>(expr: Expr<'a>) -> Result<Expr<'a>, anyhow::Error> {
             &lh,
             arrow@Token{tt: Tt::BigArrow, ..},
             &rh
-        ) => {
+        ) if arrows => {
             Expr::Call(
                 Rc::new(sym("__PRETTY_ASSERT_INT_EQ").lws_(expr.lws())),
                 tok("("),
