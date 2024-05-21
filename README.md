@@ -162,11 +162,14 @@ MY_ASSERT(1 + 1 == 3);
 ```
 
 ```
-$ ./prettyasserts -a MY_ASSERT -u MY_UNREACHABLE test.c -o test.a.c
+$ ./prettyasserts -Pmy_ test.c -o test.a.c
 $ gcc test.a.c -o test
 $ ./test
 test.c:2:assert: assert failed with 2, expected eq 3
 ```
+
+`-P/--prefix-insensitive` matches both lower and upper case symbols,
+while `-p/--prefix` only matches the exact case.
 
 By default, prettyasserts looks for the following symbols:
 
@@ -175,7 +178,7 @@ By default, prettyasserts looks for the following symbols:
 - `unreachable`
 - `__builtin_unreachable`
 
-Though these can be disabled with the -n/--no-defaults flag.
+Though these can be disabled with the `-n/--no-defaults` flag.
 
 ## Completeness
 
@@ -207,7 +210,7 @@ this file ends up with 42,231 lines of code, which unfortunately can't easily
 be parallelized by virtue of being a single file.
 
 ``` bash
-$ time ./scripts/prettyasserts.py -a LFS_ASSERT -u LFS_UNREACHABLE lfs.t.c -o lfs.t.a.c
+$ time ./scripts/prettyasserts.py -Plfs_ lfs.t.c -o lfs.t.a.c
 real    0m16.187s
 user    0m16.163s
 sys     0m0.025s
@@ -233,7 +236,7 @@ prototype, and Rust made it easy to make that prototype performant.
 The result is satisfying:
 
 ``` bash
-$ time ../prettyasserts/prettyasserts -a LFS_ASSERT -u LFS_UNREACHABLE lfs.t.c -o lfs.t.a.c
+$ time ../prettyasserts/prettyasserts -Plfs_ lfs.t.c -o lfs.t.a.c
 real    0m0.504s
 user    0m0.464s
 sys     0m0.040s

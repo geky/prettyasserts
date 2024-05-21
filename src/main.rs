@@ -14,6 +14,7 @@ use std::io::Write;
 use std::io::BufReader;
 use std::io::BufRead;
 use std::io::BufWriter;
+use std::collections::HashSet;
 
 
 // The actual parser is over here
@@ -34,6 +35,29 @@ use edit::edit;
 const PRETTYASSERT: &'static str = include_str!("prettyassert.c");
 
 
+// default symbols
+const DEFAULT_ASSERTS: [&'static str; 2] = [
+    "assert",
+    "__builtin_assert",
+];
+
+const DEFAULT_UNREACHABLES: [&'static str; 2] = [
+    "unreachable",
+    "__builtin_unreachable",
+];
+
+const DEFAULT_MEMCMPS: [&'static str; 2] = [
+    "memcmp",
+    "__builtin_memcmp",
+];
+
+const DEFAULT_STRCMPS: [&'static str; 2] = [
+    "strcmp",
+    "__builtin_strcmp",
+];
+
+
+
 // CLI arguments
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -49,28 +73,56 @@ pub struct Opt {
     #[structopt(
         short, long,
         number_of_values=1,
+        help="Additional prefixes for symbols."
+    )]
+    prefix: Vec<String>,
+
+    #[structopt(
+        short="P", long,
+        number_of_values=1,
+        help="Additional prefixes for lower/upper case symbol variants."
+    )]
+    prefix_insensitive: Vec<String>,
+
+    #[structopt(
+        long,
+        number_of_values=1,
         help="Additional symbols for assert statements."
     )]
     assert: Vec<String>,
 
     #[structopt(
-        short, long,
+        long,
         number_of_values=1,
         help="Additional symbols for unreachable statements."
     )]
     unreachable: Vec<String>,
 
     #[structopt(
-        short="A", long,
-        help="Enable arrow (=>) expressions, this is enabled by default."
+        long,
+        number_of_values=1,
+        help="Additional symbols for memcmp expressions."
     )]
-    arrow: bool,
+    memcmp: Vec<String>,
+
+    #[structopt(
+        long,
+        number_of_values=1,
+        help="Additional symbols for strcmp expressions."
+    )]
+    strcmp: Vec<String>,
 
     #[structopt(
         short, long,
-        help="Disable the default statements/expressions."
+        help="Disable default symbols."
     )]
     no_defaults: bool,
+
+    #[structopt(
+        short="A", long,
+        help="Disable arrow (=>) expressions."
+    )]
+    no_arrows: bool,
 
     #[structopt(
         short, long,
@@ -93,6 +145,68 @@ pub struct Opt {
 fn main() -> Result<(), anyhow::Error> {
     let opt = Opt::from_args();
 
+    // what symbols are we looking for?
+    let mut asserts = HashSet::new();
+    let mut unreachables = HashSet::new();
+    let mut memcmps = HashSet::new();
+    let mut strcmps = HashSet::new();
+
+    // defaults?
+    if !opt.no_defaults {
+        for assert in DEFAULT_ASSERTS {
+            asserts.insert(String::from(assert));
+        }
+        for unreachable in DEFAULT_UNREACHABLES {
+            unreachables.insert(String::from(unreachable));
+        }
+        for memcmp in DEFAULT_MEMCMPS {
+            memcmps.insert(String::from(memcmp));
+        }
+        for strcmp in DEFAULT_STRCMPS {
+            strcmps.insert(String::from(strcmp));
+        }
+    }
+
+    // prefixes?
+    for prefix in opt.prefix.iter().chain(opt.prefix_insensitive.iter()) {
+        asserts.insert(format!("{}assert", prefix));
+        unreachables.insert(format!("{}unreachable", prefix));
+        memcmps.insert(format!("{}memcmp", prefix));
+        strcmps.insert(format!("{}strcmp", prefix));
+    }
+
+    // upper/lower case prefixes?
+    for prefix in opt.prefix_insensitive.iter() {
+        asserts.insert(format!("{}assert", prefix.to_ascii_lowercase()));
+        unreachables.insert(
+            format!("{}unreachable", prefix.to_ascii_lowercase())
+        );
+        memcmps.insert(format!("{}memcmp", prefix.to_ascii_lowercase()));
+        strcmps.insert(format!("{}strcmp", prefix.to_ascii_lowercase()));
+
+        asserts.insert(format!("{}ASSERT", prefix.to_ascii_uppercase()));
+        unreachables.insert(
+            format!("{}UNREACHABLE", prefix.to_ascii_uppercase())
+        );
+        memcmps.insert(format!("{}MEMCMP", prefix.to_ascii_uppercase()));
+        strcmps.insert(format!("{}STRCMP", prefix.to_ascii_uppercase()));
+    }
+
+    // explicit symbols?
+    for assert in opt.assert.iter() {
+        asserts.insert(String::from(assert));
+    }
+    for unreachable in opt.unreachable.iter() {
+        unreachables.insert(String::from(unreachable));
+    }
+    for memcmp in opt.memcmp.iter() {
+        memcmps.insert(String::from(memcmp));
+    }
+    for strcmp in opt.strcmp.iter() {
+        strcmps.insert(String::from(strcmp));
+    }
+
+    // read from file
     let input = fs::read_to_string(&opt.input)?;
 
     // tokenize
@@ -122,7 +236,16 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     // edit!
-    tree = tree.try_map(|expr| edit(expr, &opt))?;
+    tree = tree.try_map(|expr| {
+        edit(
+            expr,
+            &asserts,
+            &unreachables,
+            &memcmps,
+            &strcmps,
+            !opt.no_arrows
+        )
+    })?;
 
     if opt.dump_modified {
         println!("{:#?}", tree);

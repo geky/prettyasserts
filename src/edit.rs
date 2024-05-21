@@ -15,17 +15,6 @@ use crate::parser::span;
 use crate::Opt;
 
 
-const DEFAULT_ASSERTS: [&'static str; 2] = [
-    "assert",
-    "__builtin_assert",
-];
-
-const DEFAULT_UNREACHABLES: [&'static str; 2] = [
-    "unreachable",
-    "__builtin_unreachable",
-];
-
-
 fn cmp_name(tt: Tt) -> &'static str {
     match tt {
         Tt::Eq => "eq",
@@ -40,17 +29,14 @@ fn cmp_name(tt: Tt) -> &'static str {
 
 
 // edit the tree
-pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
-    let asserts = (!opt.no_defaults)
-        .then_some(DEFAULT_ASSERTS.into_iter()).into_iter().flatten()
-        .chain(opt.assert.iter().map(|s| s.deref()))
-        .collect::<HashSet<&str>>();
-    let unreachables = (!opt.no_defaults)
-        .then_some(DEFAULT_UNREACHABLES.into_iter()).into_iter().flatten()
-        .chain(opt.unreachable.iter().map(|s| s.deref()))
-        .collect::<HashSet<&str>>();
-    let arrows = !opt.no_defaults || opt.arrow;
-
+pub fn edit<'a>(
+    expr: Expr<'a>,
+    asserts: &HashSet<String>,
+    unreachables: &HashSet<String>,
+    memcmps: &HashSet<String>,
+    strcmps: &HashSet<String>,
+    arrows: bool,
+) -> Result<Expr<'a>, anyhow::Error> {
     Ok(match expr.borrow() {
         // assert(memcmp(a, b, n) ?= 0)
         Expr_::Call(
@@ -60,7 +46,7 @@ pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
                 (
                     Some(Expr_::Binary(
                         Expr_::Call(
-                            Expr_::Sym(Token{tok: "memcmp", ..}),
+                            Expr_::Sym(Token{tok: memcmp_, ..}),
                             _,
                             &[
                                 (Some(lh), Some(comma1)),
@@ -84,7 +70,7 @@ pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
                 )
             ],
             rp,
-        ) if asserts.contains(assert_) => {
+        ) if asserts.contains(*assert_) && memcmps.contains(*memcmp_) => {
             Expr::Call(
                 Rc::new(sym(
                     format!("__PRETTY_ASSERT_MEM_{}",
@@ -118,7 +104,7 @@ pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
                 (
                     Some(Expr_::Binary(
                         Expr_::Call(
-                            Expr_::Sym(Token{tok: "strcmp", ..}),
+                            Expr_::Sym(Token{tok: strcmp_, ..}),
                             _,
                             &[
                                 (Some(lh), Some(comma)),
@@ -141,7 +127,7 @@ pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
                 )
             ],
             rp,
-        ) if asserts.contains(assert_) => {
+        ) if asserts.contains(*assert_) && strcmps.contains(*strcmp_) => {
             Expr::Call(
                 Rc::new(sym(
                     format!("__PRETTY_ASSERT_STR_{}",
@@ -186,7 +172,7 @@ pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
                 )
             ],
             rp,
-        ) if asserts.contains(assert_) => {
+        ) if asserts.contains(*assert_) => {
             Expr::Call(
                 Rc::new(sym(
                     format!("__PRETTY_ASSERT_INT_{}",
@@ -216,7 +202,7 @@ pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
                 (Some(expr_), None),
             ],
             rp,
-        ) if asserts.contains(assert_) => {
+        ) if asserts.contains(*assert_) => {
             Expr::Call(
                 Rc::new(sym("__PRETTY_ASSERT_BOOL_EQ").lws_(expr.lws())),
                 *lp,
@@ -240,7 +226,7 @@ pub fn edit<'a>(expr: Expr<'a>, opt: &Opt) -> Result<Expr<'a>, anyhow::Error> {
             lp,
             &[],
             rp,
-        ) if unreachables.contains(unreachable_) => {
+        ) if unreachables.contains(*unreachable_) => {
             Expr::Call(
                 Rc::new(sym("__PRETTY_ASSERT_UNREACHABLE").lws_(expr.lws())),
                 *lp,
