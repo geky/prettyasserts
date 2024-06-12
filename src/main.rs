@@ -119,7 +119,7 @@ pub struct Opt {
     no_defaults: bool,
 
     #[structopt(
-        short="A", long,
+        long,
         help="Disable arrow (=>) expressions."
     )]
     no_arrows: bool,
