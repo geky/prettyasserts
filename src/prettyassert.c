@@ -95,8 +95,8 @@ static void __pretty_assert_print_unreachable(
 #define __PRETTY_ASSERT_BOOL_GE(lh, rh) __PRETTY_ASSERT_BOOL_CMP(ge, lh, >=, rh)
 
 #define __PRETTY_ASSERT_INT_CMP(cmp, lh, op, rh) do { \
-    __typeof__(rh) _lh = lh; \
-    __typeof__(rh) _rh = rh; \
+    __typeof__(lh) _lh = lh; \
+    __typeof__(lh) _rh = rh; \
     if (!(_lh op _rh)) { \
         __pretty_assert_print( \
                 __FILE__, __LINE__, \
