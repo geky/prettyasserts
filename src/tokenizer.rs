@@ -212,15 +212,15 @@ impl<'a> Tokenizer<'a> {
     }
 
     fn _next(&mut self, n: usize) {
-        for _ in 0..n {
-            if self.input[self.i..].chars().next() == Some('\n') {
+        for c in self.input[self.i..self.i+n].chars() {
+            if c == '\n' {
                 self.line += 1;
                 self.col = 1;
             } else {
                 self.col += 1;
             }
-            self.i += 1;
         }
+        self.i += n;
     }
 
     fn skip_ws(&mut self, n: usize) {
