@@ -319,9 +319,12 @@ pub fn tokenize_at<'a>(
             _ if t.matches(r"[0-9][xX]?[0-9a-fA-F]*") => {
                 t.munch(Tt::Number)
             },
-            _ if t.matches(r#"['"][^'"]*['"]"#) => {
+            _ if t.matches(r#""(?:\.|[^"])*""#) => {
                 t.munch(Tt::String)
-            }
+            },
+            _ if t.matches(r#"'(?:\.|[^'])*'"#) => {
+                t.munch(Tt::String)
+            },
             // tokens
             _ if t.matches(r"\(")     => t.munch(Tt::LParen),
             _ if t.matches(r"\)")     => t.munch(Tt::RParen),
