@@ -48,8 +48,6 @@ pub enum Tt {
     Or,                 // |
     Xor,                // ^
     Tilde,              // ~
-    SplatSplatSplat,    // ***
-    SplatSplat,         // **
     Splat,              // *
     Slash,              // /
     Mod,                // %
@@ -359,8 +357,6 @@ pub fn tokenize_at<'a>(
             _ if t.matches(r"\|")     => t.munch(Tt::Or),
             _ if t.matches(r"\^")     => t.munch(Tt::Xor),
             _ if t.matches(r"~")      => t.munch(Tt::Tilde),
-            _ if t.matches(r"\*\*\*") => t.munch(Tt::SplatSplatSplat),
-            _ if t.matches(r"\*\*")   => t.munch(Tt::SplatSplat),
             _ if t.matches(r"\*")     => t.munch(Tt::Splat),
             _ if t.matches(r"/")      => t.munch(Tt::Slash),
             _ if t.matches(r"%")      => t.munch(Tt::Mod),

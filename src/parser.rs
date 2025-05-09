@@ -16,6 +16,7 @@ pub enum Expr<'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
     DotDotDot(Token<'a>),
+    Splat(Token<'a>),
     Label(Token<'a>, Token<'a>, Option<Rc<Expr<'a>>>),
     Case(Token<'a>, Rc<Expr<'a>>, Token<'a>, Option<Rc<Expr<'a>>>),
     Decl(Rc<Expr<'a>>, Token<'a>),
@@ -40,6 +41,7 @@ pub enum Expr_<'b, 'a> {
     Sym(Token<'a>),
     Lit(Token<'a>),
     DotDotDot(Token<'a>),
+    Splat(Token<'a>),
     Label(Token<'a>, Token<'a>, Option<&'b Expr_<'b, 'a>>),
     Case(Token<'a>, &'b Expr_<'b, 'a>, Token<'a>, Option<&'b Expr<'a>>),
     Decl(&'b Expr_<'b, 'a>, Token<'a>),
@@ -176,10 +178,19 @@ pub fn parse<'a>(
                         | Tt::String
                 ) => Expr::Lit(p.munch()),
                 Some(Tt::DotDotDot) => Expr::DotDotDot(p.munch()),
+                Some(Tt::Splat) => {
+                    let tok = p.munch();
+                    match parse_expr_1(p)? {
+                        Some(rh) => Expr::Unary(
+                            tok,
+                            Rc::new(rh),
+                        ),
+                        None => Expr::Splat(tok),
+                    }
+                }
                 Some(
                     Tt::And
                         | Tt::Tilde
-                        | Tt::Splat
                         | Tt::Add
                         | Tt::Sub
                         | Tt::Not
@@ -227,11 +238,7 @@ pub fn parse<'a>(
                         Rc::new(lh),
                         p.munch(),
                     ),
-                    Some(
-                        Tt::Splat
-                            | Tt::SplatSplat
-                            | Tt::SplatSplatSplat
-                    ) => {
+                    Some(Tt::Splat) => {
                         let tok = p.munch();
                         match parse_expr_1(p)? {
                             Some(rh) => Expr::Binary(
@@ -245,7 +252,8 @@ pub fn parse<'a>(
                             ),
                         }
                     }
-                    Some(Tt::Arrow
+                    Some(
+                        Tt::Arrow
                             | Tt::Shl
                             | Tt::Shr
                             | Tt::Slash
@@ -579,6 +587,7 @@ impl<'b, 'a> Map<Fork<'a>> for Expr_<'b, 'a> {
             Expr_::Sym(tok) => Expr::Sym(tok._try_map(cb)?),
             Expr_::Lit(tok) => Expr::Lit(tok._try_map(cb)?),
             Expr_::DotDotDot(tok) => Expr::DotDotDot(tok._try_map(cb)?),
+            Expr_::Splat(tok) => Expr::Splat(tok._try_map(cb)?),
             Expr_::Label(label, tok, expr) => Expr::Label(
                 label._try_map(cb)?,
                 tok._try_map(cb)?,
